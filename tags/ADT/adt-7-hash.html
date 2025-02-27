@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-数据结构与算法-7.散列列表</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/github.css">
+<link rel="stylesheet" href="/speciou.css"
+</head><body>    <div class="container">        <header class="main-header">            <h1 class="main-header__title uplize"><a class="main-header__title__link" href="/">Joe1sn's Cabinet</a></h1>            <nav class="main-header__nav">                <ul class="main-nav">                    <li class="main-nav__list"><a class="main-nav__list__link active" href="/" target="_self">HOME</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="/archives/"                            target="_self">ARCHIVE</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"                            target="_blank">GITHUB</a></li>                </ul>            </nav>        </header>    </div><div class="typora-export os-windows"><div id="write" class>
+<p><strong>2022-07-05 14:26:37</strong></p>
+<h1>Hash Table</h1>
+<!-- more -->
+<h1>math magic</h1>
+<h2>introduction</h2>
+<p>​	In order to understanding what does a hash table mean in a intuitive way, using python here.
+​	Here is using some cryptograph algorithm like  <code>sha</code> , <code>md5</code> and so on.It's basically the strict mathematical way to implenment a hash table algorithm.</p>
+<pre><code class="language-python">#coding=utf-8
+#python3.8
+
+from hashlib import sha1, sha256, md5
+msg = b&quot;hello world&quot;
+print(msg)
+print(&quot;msg_sha1:&quot;,sha1(msg).hexdigest())
+print(&quot;msg_sha256:&quot;,sha256(msg).hexdigest())
+print(&quot;msg_md5:&quot;,md5(msg).hexdigest())
+print()
+
+msg2 = b&quot;hello word&quot;
+print(msg2)
+print(&quot;msg2_sha1:&quot;,sha1(msg2).hexdigest())
+print(&quot;msg2_sha256:&quot;,sha256(msg2).hexdigest())
+print(&quot;msg2_md5:&quot;,md5(msg2).hexdigest())
+</code></pre>
+<p>output</p>
+<p><img src="https://img.joe1sn.top/uploads/big/1c1104e2491f99565ec148ddc4ab25b3.png" alt="" /></p>
+<p>​	a slightly different in message caused large difference in results.
+​	so, we can give an input and generate an output that likes the only tag related to this input. What hash table in data structure did is <strong>mapping key to specific location</strong>, its fast to find the data.</p>
+<h2>hash function</h2>
+<p>A good hash function must could satisfy these two conditions:</p>
+<ul>
+<li>support fast calculating</li>
+<li>hash addresses evenly</li>
+</ul>
+<p>We assume the hash table with length $M$, store the location from $0,M-1$.So hash function convert key to $0$  to $M$ int numbers.</p>
+<ol>
+<li>
+<p>remainder method</p>
+<p>$h(key)=key\ mod\ M$</p>
+<p>This method must choosen proper $M$.normally choosing the max prime number $P$ smaller than $M$,like</p>
+<p>$h(key)=key\ mod\ P$</p>
+</li>
+<li>
+<p>Mid-square method</p>
+<p>$h(key)=\lfloor \frac{M}{W}(key^2\ mod\ W) \rfloor$</p>
+<p>and $W=2^w$ $M=2^k$, $W$ is computer's bit long and $M$ is hash table's length.</p>
+</li>
+<li>
+<p>flooding method</p>
+<p>like separate $123456789$ to <code>123</code>,<code>456</code>,<code>789</code> and add them together</p>
+</li>
+<li>
+<p>numeric analyz method</p>
+<p>normally used in circumstance already kown the distribution of key</p>
+</li>
+</ol>
+<h1>avoid collisions</h1>
+<h2>zipper method</h2>
+<p>if the diff element mapping into same location, set a link list in this location.</p>
+<h2>linear probe method</h2>
+<p>while there is a collision, probe empty location with some certain sequence,then store the element caues collision to the first empty place found.</p>
+<p>we have hash function $h(key)=key\ mod\ 11$</p>
+<p>Insert would be like</p>
+<p><img src="https://img.joe1sn.top/uploads/big/38f2b52866531b3cb7b6ca0a4c71ff1d.jpg" alt="" /></p>
+<p>Find would be like</p>
+<p><img src="https://img.joe1sn.top/uploads/big/a2d1b036f9ed069dbe8af1975327bf23.jpg" alt="" /></p>
+<p>but the similar hash element while causing Linear aggregation.</p>
+<h2>ADT</h2>
+<ul>
+<li>
+<p>Data</p>
+<p>limited set to store element</p>
+</li>
+<li>
+<p>Algorithm</p>
+<p><code>hash_create(ht, M)</code>: creating a hash table can store M elements</p>
+<p><code>hash_destroy(ht)</code>: realse the <code>ht </code> storage space</p>
+<p><code>hash(key)</code>: according to hash function to find the hash value</p>
+<p><code>search(key)</code>: according to linear probe method to search the element</p>
+<p><code>insert(ht,key,element)</code>: according to linear probe method to insert the element</p>
+</li>
+</ul>
+<h3>hash_create</h3>
+<pre><code class="language-c">void hash_create(hash_table *ht, int size){
+    int i;
+    ht-&gt;M=size;
+    ht-&gt;num=0;
+    ht-&gt;empty=(BOOL *)malloc(sizeof(BOOL)*size);
+    ht-&gt;elements=(int *)malloc(sizeof(int)*size);
+    for (i = 0; i &lt; size; i++)
+    {
+        ht-&gt;empty[i]=true;
+        ht-&gt;elements[i]=NU;
+    }
+}
+</code></pre>
+<h3>hash</h3>
+<pre><code class="language-c">int hash(int key, int M){
+    return key%M;
+}
+</code></pre>
+<h3>hash_search</h3>
+<pre><code class="language-c">int hash_search(hash_table *ht,int key){
+    int anchor, pos;
+    anchor=pos=hash(key,ht-&gt;M);
+    pos=(pos+1)%ht-&gt;M;
+    do{
+        if(ht-&gt;empty[pos])
+            return NOTPRESENT;
+        if(ht-&gt;elements[pos]==key)
+            return pos;
+        pos=(pos+1)%ht-&gt;M;
+    }while(pos!=anchor);
+    return NOTPRESENT;
+}
+</code></pre>
+<h3>hash_insert</h3>
+<pre><code class="language-c">BOOL hash_insert(hash_table *ht, int key,){
+    int anchor,i;
+    if(hash_is_full(ht))
+        return false;
+    if(hash_search(ht,key)!=NOTPRESENT)
+        return false;
+    i=anchor=hash(ht-&gt;M, key);
+    do{
+        if(ht-&gt;elements[i]==NOTPRESENT) //current position can be used
+        {
+            ht-&gt;elements[i]=key;
+            ht-&gt;empty[i]=false;
+            ht-&gt;num++;
+            return true;
+        }
+        i=(i+1)%ht-&gt;M;
+    }while (i != anchor)
+    return false;
+}
+</code></pre>
+<h3>test function</h3>
+<pre><code class="language-c">#include &lt;ADT/hash.h&gt;
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;time.h&gt;
+
+int main()
+{
+    hash_table *ht = (hash_table*)malloc(sizeof(hash_table));
+    hash_create(ht,0x10);
+
+    printf(&quot;--------------hash insert\n&quot;);
+    int i,a;
+    srand((unsigned)time(NULL));
+    for (i = 0; i &lt; 0x15; i++)
+    {
+        a = rand()%0x100;
+        hash_insert(ht,a);
+    }
+    hash_output(ht);
+
+    printf(&quot;--------------hash delete\n&quot;);
+    int del_list[5];
+    for (i = 0; i &lt; 5; i++)
+        del_list[i]=ht-&gt;elements[5+i];
+    for (i = 0; i &lt; 5; i++)
+        hash_delete(ht,del_list[i]);
+    hash_output(ht);
+
+    printf(&quot;--------------hash insert again\n&quot;);
+    for (i = 5; i &lt; 10; i++)
+    {
+        a = rand()%0x100;
+        hash_insert(ht,a);
+    }
+    hash_output(ht);
+
+    return 0;
+}
+</code></pre>
+<h2>other method</h2>
+<ul>
+<li>
+<p>secondary exploration</p>
+<p>$h_1(key),h_2(key)...h_{2i-1}(key),h_{2i}(key)$</p>
+<p>$h_{2i-1}(key)=(h(key)+i^2)\ mod\ M$</p>
+</li>
+<li>
+<p>double hash</p>
+</li>
+</ul>
+
+</div>
+</div></body>

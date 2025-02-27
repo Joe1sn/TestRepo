@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-windows内核驱动 3-文件操作</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/github.css">
+<link rel="stylesheet" href="/speciou.css"
+</head><body>    <div class="container">        <header class="main-header">            <h1 class="main-header__title uplize"><a class="main-header__title__link" href="/">Joe1sn's Cabinet</a></h1>            <nav class="main-header__nav">                <ul class="main-nav">                    <li class="main-nav__list"><a class="main-nav__list__link active" href="/" target="_self">HOME</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="/archives/"                            target="_self">ARCHIVE</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"                            target="_blank">GITHUB</a></li>                </ul>            </nav>        </header>    </div><div class="typora-export os-windows"><div id="write" class>
+<p><strong>2024-03-17 16:51:33</strong></p>
+<p>之前写过：<a href="https://joe1sn.eu.org/2023/02/16/windows_kernel_driver_1/">windows内核驱动 1-环境搭建</a>、<a href="https://joe1sn.eu.org/2023/02/17/windows_kernel_driver_2/">windows内核驱动 2-页表探索</a></p>
+<p>但是内容确实有点衔接不上，这里根据<a href="https://joe1sn.eu.org/2024/01/25/win-hevd-exp-stackoverflow-I/">【Win Pwn】HEVD-内核栈溢出(上)</a>中展示的基础技巧来继续</p>
+<!--more-->
+<h1>项目结构优化</h1>
+<p><img src="https://img.joe1sn.top/uploads/big/74db52682cbce590b8491fd618edceff.png" alt="image-20240317165802241" /></p>
+<p>之前写过的所有功能都在<code>main.c</code>中，新加入<code>IoctlFuncs</code>，这里来写所有的ioctl功能，那么就要重新设计<code>MyControl</code></p>
+<pre><code class="language-cpp">    PIO_STACK_LOCATION pStack = IoGetCurrentIrpStackLocation(pIrp);
+    ULONG ioCode = pStack-&gt;Parameters.DeviceIoControl.IoControlCode;
+    ULONG inLen = pStack-&gt;Parameters.DeviceIoControl.InputBufferLength;
+
+    ULONG ioInfo = 0;
+    switch (ioCode)
+    {
+    case IOCTL_MUL:
+    {
+        DWORDLONG inData = *(PDWORDLONG)pIrp-&gt;AssociatedIrp.SystemBuffer;
+        DbgPrint(&quot;Kernel Recive: %d, Len: %lld\n&quot;, inData, inLen);
+        inData *= 2;
+        DbgPrint(&quot;Kernel Data %d\n&quot;, inData);
+        *(PDWORDLONG)pIrp-&gt;AssociatedIrp.SystemBuffer = inData;
+        ioInfo = 4;
+        break;
+    }
+
+    default:
+        RET = STATUS_UNSUCCESSFUL;
+        ioInfo = 0;
+        break;
+    }
+</code></pre>
+<p>这里分析得到我们需要的函数，大概可以声明为</p>
+<pre><code class="language-cpp">ULONG Mul(PIRP pIrp) {
+    PIO_STACK_LOCATION pStack = IoGetCurrentIrpStackLocation(pIrp);
+    ULONG inLen = pStack-&gt;Parameters.DeviceIoControl.InputBufferLength;
+    DWORDLONG inData = *(PDWORDLONG)pIrp-&gt;AssociatedIrp.SystemBuffer;
+    DbgPrint(&quot;Kernel Recive: %d, Len: %lld\n&quot;, inData, inLen);
+    inData *= 2;
+    DbgPrint(&quot;Kernel Data %d\n&quot;, inData);
+    *(PDWORDLONG)pIrp-&gt;AssociatedIrp.SystemBuffer = inData;
+    return (ULONG)inData;
+    //return 4;
+}
+</code></pre>
+<p>注意新建的文件要以<code>.c</code>结尾</p>
+<p><img src="https://img.joe1sn.top/uploads/big/07c3633604ed202bd0922197da264525.png" alt="image-20240317171836424" /></p>
+<h1>文件操作</h1>
+<ul>
+<li><code>ZwXXXX</code> -&gt; <code>系统检查</code> -&gt; <code>NtXXXX</code></li>
+<li>R3下都一样</li>
+</ul>
+<h2>文件删除</h2>
+<p>使用到的API是</p>
+<pre><code class="language-cpp">NTSYSAPI NTSTATUS ZwDeleteFile(
+  [in] POBJECT_ATTRIBUTES ObjectAttributes
+);
+</code></pre>
+<p>参数为</p>
+<pre><code class="language-cpp">typedef struct _OBJECT_ATTRIBUTES {
+  ULONG           Length;
+  HANDLE          RootDirectory;
+  PUNICODE_STRING ObjectName;
+  ULONG           Attributes;
+  PVOID           SecurityDescriptor;
+  PVOID           SecurityQualityOfService;
+} OBJECT_ATTRIBUTES;
+</code></pre>
+<p>初始化改参数的api</p>
+<pre><code class="language-cpp">VOID InitializeObjectAttributes(
+  [out]          POBJECT_ATTRIBUTES   p,
+  [in]           PUNICODE_STRING      n,
+  [in]           ULONG                a,
+  [in]           HANDLE               r,
+  [in, optional] PSECURITY_DESCRIPTOR s
+);
+</code></pre>
+<p>整个函数以及使用</p>
+<pre><code class="language-cpp">NTSTATUS KernelDeleteFile(PWCHAR filePath) {
+    NTSTATUS status = STATUS_SUCCESS;
+    UNICODE_STRING FilePath = { 0 };
+    RtlInitUnicodeString(&amp;FilePath, filePath);
+    DbgPrint(&quot;[Kernel Delete File] The File Path is %wZ\n&quot;, FilePath);
+
+    OBJECT_ATTRIBUTES FileAttribute = { 0 };
+    InitializeObjectAttributes(&amp;FileAttribute, &amp;FilePath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    status = ZwDeleteFile(&amp;FileAttribute);
+    if (!NT_SUCCESS(status))
+        DbgPrint(&quot;Create Device Failed: %x\n&quot;, status);
+    return status;
+}
+
+NTSTATUS
+DriverEntry(PDRIVER_OBJECT  DriverObject, PUNICODE_STRING RegistryPath)
+{
+//.........
+    KernelDeleteFile(L&quot;\\??\\C:\\exp.exe&quot;);
+
+    return Status;
+}
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/eac1ddebf14c4632fc4ed20ec4c1c2bd.png" alt="image-20240317174745958" /></p>
+<h2>文件复制</h2>
+<p>属于是把大象装进冰箱分几步</p>
+<pre><code class="language-cpp">NTSTATUS KernelCopyFile(PWCHAR dstFile, PWCHAR srcFile) {
+    // 1-Declear Related Variable
+    NTSTATUS status = STATUS_SUCCESS;
+    UNICODE_STRING DstFilePath = { 0 };
+    UNICODE_STRING SrcFilePath = { 0 };
+    RtlInitUnicodeString(&amp;DstFilePath, dstFile);
+    RtlInitUnicodeString(&amp;SrcFilePath, srcFile);
+    IO_STATUS_BLOCK IoBlock = { 0 };
+    HANDLE hSrcFile = NULL;
+    HANDLE hDstFile = NULL;
+    //----------------------
+
+    // 2-Init Related Variable
+    OBJECT_ATTRIBUTES DstFileAttribute = { 0 };
+    OBJECT_ATTRIBUTES SrcFileAttribute = { 0 };
+    InitializeObjectAttributes(&amp;DstFileAttribute, &amp;DstFilePath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&amp;SrcFileAttribute, &amp;SrcFilePath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    
+    // 3-Open File
+    status = ZwOpenFile(&amp;hSrcFile, GENERIC_ALL, &amp;SrcFileAttribute, &amp;IoBlock, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Open File %wZ Failed, status: %x\n&quot;, SrcFilePath, status);
+        return status;
+    }
+
+    // 4-Get Source File Size &amp; Allocate Transfer Buffer
+    FILE_STANDARD_INFORMATION StdFileInfo = { 0 };
+    status = ZwQueryInformationFile(hSrcFile, &amp;IoBlock, &amp;StdFileInfo, sizeof(FILE_STANDARD_INFORMATION), FileStandardInformation);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Query File %wZ Failed, status: %x\n&quot;, SrcFilePath, status);
+        ZwClose(hSrcFile);
+        return status;
+    }
+    DbgPrint(&quot;IoBlock size %d\n&quot;, IoBlock.Information);
+    DbgPrint(&quot;StdFileInfo size %d\n&quot;, StdFileInfo.EndOfFile.QuadPart);
+
+    PVOID Transfer = ExAllocatePool2(POOL_FLAG_NON_PAGED, StdFileInfo.EndOfFile.QuadPart, 'ymym');
+    if (Transfer == NULL) {
+        DbgPrint(&quot;ExAllocatePool Transfer Buffer Failed, status: %x\n&quot;, status);
+        ZwClose(hSrcFile);
+        return status;
+    }
+    RtlZeroMemory(Transfer, StdFileInfo.EndOfFile.QuadPart);
+
+    // 5-Read Source File To Buffer
+    LARGE_INTEGER TempReadCount = { 0 };
+    status = ZwReadFile(hSrcFile, NULL, NULL, NULL, &amp;IoBlock, Transfer, (ULONG)StdFileInfo.EndOfFile.QuadPart, &amp;TempReadCount, NULL);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Read to Transfer Buffer Failed, status: %x\n&quot;, status);
+        ExFreePool(Transfer);
+        return status;
+    }
+    DbgPrint(&quot;Io info: %d&quot;, IoBlock.Information);
+    ZwClose(hSrcFile);
+
+    // 6-Create New File
+    status = ZwCreateFile(&amp;hDstFile, GENERIC_ALL, &amp;DstFileAttribute, &amp;IoBlock, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE, FILE_SUPERSEDE, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Create File Failed, status: %x\n&quot;, status);
+        ExFreePool(Transfer);
+        return status;
+    }
+    
+    // 7-Write to New File
+    status = ZwWriteFile(hDstFile, NULL, NULL, NULL, &amp;IoBlock, Transfer, (ULONG)StdFileInfo.EndOfFile.QuadPart, &amp;TempReadCount, NULL);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Write File Failed, status: %x\n&quot;, status);
+        ExFreePool(Transfer);
+        ZwClose(hDstFile);
+        return status;
+    }
+    ZwClose(hDstFile);
+    DbgPrint(&quot;Write %d\n&quot;, IoBlock.Information);
+    DbgPrint(&quot;Created New File %wZ\n&quot;, DstFilePath);
+    return status;
+}
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/3bbaf0ee5dc7ec78365d41efcecc1872.png" alt="image-20240317193310825" /></p>
+<h1>优化到IOCTL</h1>
+<h2>文件删除</h2>
+<p>驱动</p>
+<pre><code class="language-cpp">NTSTATUS KernelDeleteFile(PIRP pIrp) {
+    NTSTATUS status = STATUS_SUCCESS;
+    PIO_STACK_LOCATION pStack = IoGetCurrentIrpStackLocation(pIrp);
+    ULONG filePathLen = pStack-&gt;Parameters.DeviceIoControl.InputBufferLength;
+    
+    WCHAR filePath[0x1000] = { 0 };// = pIrp-&gt;AssociatedIrp.SystemBuffer;
+    if (filePathLen &gt;= 0x1000) {
+        DbgPrint(&quot;Size of file path is too big\n&quot;);
+        return status;
+    }
+    UNICODE_STRING FilePath = { 0 };
+    RtlZeroMemory(filePath, 0x1000);
+    RtlCopyMemory(filePath, pIrp-&gt;AssociatedIrp.SystemBuffer, filePathLen);
+    RtlInitUnicodeString(&amp;FilePath, filePath);
+
+    DbgPrint(&quot;Now Delete File %wZ\n&quot;, FilePath);
+
+    OBJECT_ATTRIBUTES FileAttribute = { 0 };
+    InitializeObjectAttributes(&amp;FileAttribute, &amp;FilePath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    status = ZwDeleteFile(&amp;FileAttribute);
+    if (!NT_SUCCESS(status))
+        DbgPrint(&quot;Delete Device Failed: %x\n&quot;, status);
+    return status;
+}
+</code></pre>
+<p>客户端</p>
+<pre><code class="language-cpp">void KDeleteFile(HANDLE hDevice, const wchar_t filepath[]) {
+    DWORD info = 0;
+    std::wstring prefix = L&quot;\\??\\&quot;;
+    std::wstring r3path = filepath;
+    r3path = prefix + r3path;
+    DeviceIoControl(hDevice, IOCTL_DELETE_FILE, (LPVOID)r3path.c_str(), (r3path.size()) * 2 - 1, NULL, 0, &amp;info, NULL);
+}
+</code></pre>
+<h2>文件复制</h2>
+<p>驱动</p>
+<pre><code class="language-cpp">NTSTATUS KernelCopyFile(PIRP pIrp) {
+
+    // 0-Get Param
+    ParamKernelCopyFile Param = { 0 };
+    WCHAR dstFile[0x1000] = { 0 };
+    WCHAR srcFile[0x1000] = { 0 };
+    RtlZeroMemory(dstFile, 0x1000);
+    RtlZeroMemory(srcFile, 0x1000);
+
+    RtlCopyMemory((PVOID)&amp;Param, pIrp-&gt;AssociatedIrp.SystemBuffer, sizeof(ParamKernelCopyFile));
+    RtlCopyMemory((PVOID)dstFile, Param.dstFile, Param.dstFileLen);
+    RtlCopyMemory((PVOID)srcFile, Param.srcFile, Param.srcFileLen);
+
+    //DbgPrint(&quot;&quot;)
+
+
+    // 1-Declear Related Variable
+    NTSTATUS status = STATUS_SUCCESS;
+    UNICODE_STRING DstFilePath = { 0 };
+    UNICODE_STRING SrcFilePath = { 0 };
+    RtlInitUnicodeString(&amp;DstFilePath, dstFile);
+    RtlInitUnicodeString(&amp;SrcFilePath, srcFile);
+    IO_STATUS_BLOCK IoBlock = { 0 };
+    HANDLE hSrcFile = NULL;
+    HANDLE hDstFile = NULL;
+    //----------------------
+
+    // 2-Init Related Variable
+    OBJECT_ATTRIBUTES DstFileAttribute = { 0 };
+    OBJECT_ATTRIBUTES SrcFileAttribute = { 0 };
+    InitializeObjectAttributes(&amp;DstFileAttribute, &amp;DstFilePath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    InitializeObjectAttributes(&amp;SrcFileAttribute, &amp;SrcFilePath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+    // 3-Open File
+    status = ZwOpenFile(&amp;hSrcFile, GENERIC_ALL, &amp;SrcFileAttribute, &amp;IoBlock, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Open File %wZ Failed, status: %x\n&quot;, SrcFilePath, status);
+        return status;
+    }
+
+    // 4-Get Source File Size &amp; Allocate Transfer Buffer
+    FILE_STANDARD_INFORMATION StdFileInfo = { 0 };
+    status = ZwQueryInformationFile(hSrcFile, &amp;IoBlock, &amp;StdFileInfo, sizeof(FILE_STANDARD_INFORMATION), FileStandardInformation);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Query File %wZ Failed, status: %x\n&quot;, SrcFilePath, status);
+        ZwClose(hSrcFile);
+        return status;
+    }
+
+    PVOID Transfer = ExAllocatePool2(POOL_FLAG_NON_PAGED, StdFileInfo.EndOfFile.QuadPart, 'ymym');
+    if (Transfer == NULL) {
+        DbgPrint(&quot;ExAllocatePool Transfer Buffer Failed, status: %x\n&quot;, status);
+        ZwClose(hSrcFile);
+        return status;
+    }
+    RtlZeroMemory(Transfer, StdFileInfo.EndOfFile.QuadPart);
+
+    // 5-Read Source File To Buffer
+    LARGE_INTEGER TempReadCount = { 0 };
+    status = ZwReadFile(hSrcFile, NULL, NULL, NULL, &amp;IoBlock, Transfer, (ULONG)StdFileInfo.EndOfFile.QuadPart, &amp;TempReadCount, NULL);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Read to Transfer Buffer Failed, status: %x\n&quot;, status);
+        ExFreePool(Transfer);
+        return status;
+    }
+    ZwClose(hSrcFile);
+
+    // 6-Create New File
+    status = ZwCreateFile(&amp;hDstFile, GENERIC_ALL, &amp;DstFileAttribute, &amp;IoBlock, NULL, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE, FILE_SUPERSEDE, FILE_SYNCHRONOUS_IO_NONALERT, NULL, 0);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Create File Failed, status: %x\n&quot;, status);
+        ExFreePool(Transfer);
+        return status;
+    }
+
+    // 7-Write to New File
+    status = ZwWriteFile(hDstFile, NULL, NULL, NULL, &amp;IoBlock, Transfer, (ULONG)StdFileInfo.EndOfFile.QuadPart, &amp;TempReadCount, NULL);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Write File Failed, status: %x\n&quot;, status);
+        ExFreePool(Transfer);
+        ZwClose(hDstFile);
+        return status;
+    }
+    ZwClose(hDstFile);
+    DbgPrint(&quot;Created New File %wZ\n&quot;, DstFilePath);
+    return status;
+}
+</code></pre>
+<p>客户端</p>
+<pre><code class="language-cpp">void KCopyFile(HANDLE hDevice, const wchar_t srcpath[], const wchar_t dstpath[]) {
+    ParamKernelCopyFile param = { 0 };
+    DWORD info = 0;
+    std::wstring prefix = L&quot;\\??\\&quot;;
+    std::wstring SRC = srcpath;
+    std::wstring DST = dstpath;
+    SRC = prefix + SRC;
+    DST = prefix + DST;
+
+    param.dstFile = (PWCHAR)DST.c_str();
+    param.srcFile = (PWCHAR)SRC.c_str();
+    param.dstFileLen = DST.size() * 2 - 1;
+    param.srcFileLen = SRC.size() * 2 - 1;
+
+    std::wcout &lt;&lt; L&quot;SRC Path &quot; &lt;&lt; param.srcFile &lt;&lt; std::endl;
+    std::wcout &lt;&lt; L&quot;DST Path &quot; &lt;&lt; param.dstFile &lt;&lt; std::endl;
+    DeviceIoControl(hDevice, IOCTL_COPY_FILE, (LPVOID)&amp;param, sizeof(param), NULL, 0, &amp;info, NULL);
+
+}
+</code></pre>
+<h2>更好的文件复制</h2>
+<p>复制的时候使用内存大小，但是内核内存还是得节省着用，而且大文件可能会整数溢出</p>
+<p>写个write的循环就行了</p>
+<p>但是想了想涉及到文件追加啥的，我是懒狗</p>
+
+</div>
+</div></body>

@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-JavaWeb笔记-Junit与反射</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/github.css">
+<link rel="stylesheet" href="/speciou.css"
+</head><body>    <div class="container">        <header class="main-header">            <h1 class="main-header__title uplize"><a class="main-header__title__link" href="/">Joe1sn's Cabinet</a></h1>            <nav class="main-header__nav">                <ul class="main-nav">                    <li class="main-nav__list"><a class="main-nav__list__link active" href="/" target="_self">HOME</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="/archives/"                            target="_self">ARCHIVE</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"                            target="_blank">GITHUB</a></li>                </ul>            </nav>        </header>    </div><div class="typora-export os-windows"><div id="write" class>
+<p><strong>2022-03-16 07:27:53</strong></p>
+<p>Junit单元测试与反射</p>
+<p>黑盒-白盒</p>
+<!-- more -->
+<h2>junit使用：白盒测试</h2>
+<p>步骤：</p>
+<ol>
+<li>定义一个测试类
+<ul>
+<li>测试类名：被测试类+Test <code>CalculatorTest</code></li>
+<li>包名：xxx.xxx.xxx.test</li>
+</ul>
+</li>
+<li>定义测试方法：可以独立执行，建议
+<ul>
+<li>方法名：test测试方法名 <code>testAdd()</code></li>
+<li>返回值：void（独立运行）</li>
+<li>参数列表：空参</li>
+</ul>
+</li>
+<li>方法+@test注解</li>
+<li>导入Junit依赖环境</li>
+</ol>
+<pre><code class="language-java">package test;
+
+import junit.Calculator;
+import org.junit.Test;
+
+public class CalculatorTest {
+    //测试add方法
+    @Test
+    public void testAdd(){
+        //System.out.printf(&quot;Excuted&quot;);
+        //创建计算器对象
+        Calculator c = new Calculator();
+        //2.调用add方法
+        int result = c.add(1,2);
+        System.out.println(result);
+    }
+}
+</code></pre>
+<pre><code class="language-java">package junit;
+//计算器
+public class Calculator {
+    //加法
+    public int add(int a, int b){
+        return  a+b;
+    }
+    //减法
+    public int sub(int a, int b){
+        return  a-b;
+    }
+}
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/6b6a380169c11848bc34cc5b196fda89.png" alt="image-20220315202108710" /></p>
+<p>在add添加除0异常</p>
+<pre><code class="language-java">package junit;
+//计算器
+public class Calculator {
+    //加法
+    public int add(int a, int b){
+        int i = 3/0;
+        return  a+b;
+    }
+    //减法
+    public int sub(int a, int b){
+        return  a-b;
+    }
+}
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/10083d9cd80d2925466a59e220f461a7.png" alt="image-20220315202216277" /></p>
+<p>假设原方法中add写成了-，使用断言报错</p>
+<pre><code class="language-java">package test;
+
+import junit.Calculator;
+import org.junit.Assert;
+import org.junit.Test;
+
+public class CalculatorTest {
+    //测试add方法
+    @Test
+    public void testAdd(){
+        //System.out.printf(&quot;Excuted&quot;);
+        //创建计算器对象
+        Calculator c = new Calculator();
+        //2.调用add方法
+        int result = c.add(1,2);
+        //断言assert
+        Assert.assertEquals(3, result);
+    }
+
+}
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/f18a453e5c8eb5f21a67c07b789afcb3.png" alt="image-20220315202757465" /></p>
+<p>同理可以得到sub的测试函数</p>
+<pre><code class="language-java">    //测试sub方法
+    @Test
+    public void testSub(){
+        Calculator c = new Calculator();
+        int result = c.sub(2,1);
+        Assert.assertEquals(3,result);
+    }
+</code></pre>
+<p><strong>注解补充</strong></p>
+<p><strong>@Before</strong></p>
+<ul>
+<li>
+<p>初始化方法</p>
+</li>
+<li>
+<p>用于资源的申请，所有测试方法执行之前都会先执行该方法</p>
+</li>
+<li>
+<p>在测试方法之前被自动执行</p>
+</li>
+</ul>
+<p><strong>@After</strong></p>
+<ul>
+<li>
+<p>释放资源</p>
+</li>
+<li>
+<p>在所有测试方法执行完后都会自动执行该方法</p>
+</li>
+<li>
+<p>测试方法执行之后自动执行</p>
+</li>
+</ul>
+<pre><code class="language-java">    //初始化方法
+    //用于资源的申请，所有测试方法执行之前都会先执行该方法
+    @Before
+    public void init(){
+        System.out.println(&quot;init...&quot;);
+    }
+
+    //释放资源
+    //在所有测试方法执行完后都会自动执行该方法
+    @After
+    public void close(){
+        System.out.println(&quot;closed&quot;);
+    }
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/15ea3e94a063b7201e51e9697b743165.png" alt="image-20220315203550168" /></p>
+<h2>反射</h2>
+<h3>框架设计的灵魂</h3>
+<p><strong>框架</strong>：半成品软件。可以在框架基础上继续开发，简化编码</p>
+<p><strong>反射</strong>：将类的各个组成部分封装为其他对象（<font color = red>反射机制</font>）</p>
+<ul>
+<li>好处：
+<ul>
+<li>在程序运行中操作这些对象</li>
+<li>可以解耦，提高程序可拓展性</li>
+</ul>
+</li>
+</ul>
+<p><strong>Java代码运行阶段</strong></p>
+<img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/medium/2cc8ffb70910229257ff57732eccd951.jpg" style="zoom:80%;" />
+<p><strong>获取Class对象方式</strong></p>
+<ol>
+<li>
+<p>Source：</p>
+<p>对用于配置文件，将类名定义在配置文件中。读取文件，加载类</p>
+<p>Class.forName(&quot;全类名&quot;)：将字节码文件加载进内存返回class对象</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/3241fb86e3789bfa50b4ebf419cb0f3d.png" alt="image-20220315212602999" /></p>
+</li>
+<li>
+<p>Class：</p>
+<p>多用于参数传递</p>
+<p>依据类名属性class，获取class对象</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/aa14dc4ff67906a953cc018db6a30e3a.png" alt="image-20220315212737256" /></p>
+</li>
+<li>
+<p>Runtime</p>
+<p>多用于对象的获取字节码的方式</p>
+<p>对象.getClass()：方法封装在Object中，被所有对象继承了</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/03fd6fb45fb7a87a017ea833198e7e3e.png" alt="image-20220315212901262" /></p>
+</li>
+</ol>
+<p>同一个字节码文件在同一次程序运行中，只会被加载一次；不论通过那种方式取得，都是同一个对象</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/b83d646d672df6512991cc3f94c0bc48.png" alt="" /></p>
+<p>每个类对象都不同</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/15d7a01efb5f765459828d9764b452d7.png" alt="image-20220315213311200" /></p>
+<h3>使用class对象</h3>
+<p><strong>功能：</strong></p>
+<ul>
+<li>
+<p>获取：</p>
+<pre><code class="language-java">package LearnJunit.domain;
+
+public class Person {
+    private String name;
+    private int age;
+
+    public String a;
+    protected String b;
+    String c;
+    private String d;
+
+    public Person() {
+    }
+
+    public Person(String name, int age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setAge(int age) {
+        this.age = age;
+    }
+
+    public int getAge() {
+        return age;
+    }
+
+    @Override
+    public String toString() {
+        return &quot;Person{&quot; +
+                &quot;name='&quot; + name + '\'' +
+                &quot;, age=&quot; + age +
+                &quot;, a='&quot; + a + '\'' +
+                &quot;, b='&quot; + b + '\'' +
+                &quot;, c='&quot; + c + '\'' +
+                &quot;, d='&quot; + d + '\'' +
+                '}';
+    }
+}
+</code></pre>
+<ul>
+<li>
+<p>获取成员变量们</p>
+<ul>
+<li>
+<p><code>Field[] getFields()</code>：获取所有public成员变量</p>
+<pre><code class="language-java">        Field[] fields = personClass.getFields();
+        for (Field field: fields){
+            System.out.println(field);
+        }
+</code></pre>
+</li>
+<li>
+<p><code>Field getField(String name)</code>：获取所有指定名称public成员变量</p>
+<pre><code class="language-java">Field a = personClass.getField(&quot;a&quot;);
+</code></pre>
+</li>
+<li>
+<p><code>Field[] getDeclaredFields()</code></p>
+<pre><code class="language-java">        //获取所有成员变量，不考虑修饰
+        Field[] DeclaredFields = personClass.getDeclaredFields();
+        for (Field getDeclaredField: DeclaredFields){
+            System.out.println(getDeclaredField);
+        }
+</code></pre>
+</li>
+<li>
+<p><code>Field getDeclaredField(String name)</code></p>
+<p>反射私有、保护成员变量，要设置忽略访问权限的修饰符安全监测</p>
+<pre><code class="language-java">        //1.4获取单个私有
+        System.out.println(&quot;---------------&quot;);
+        Field d = personClass.getDeclaredField(&quot;d&quot;);
+        //1.4.1忽略安全访问
+        d.setAccessible(true);//暴力反射
+        Object value2 = d.get(p);
+        System.out.println(value2);
+</code></pre>
+</li>
+</ul>
+</li>
+<li>
+<p>获取构造方法们</p>
+<ul>
+<li>
+<p><code>Constructor&lt;?&gt;[] getConstructors()</code></p>
+<pre><code class="language-java">        Constructor constructor =  personClass.getConstructor(String.class, int.class);
+        System.out.println(constructor);
+</code></pre>
+</li>
+<li>
+<p><code>Constructor&lt;T&gt; getConstructor(String name)</code></p>
+</li>
+<li>
+<p><code>Constructor&lt;?&gt;[] getDeclaredConstructors()</code></p>
+</li>
+<li>
+<p><code>Constructor&lt;T&gt; getDeclaredConstructor(String name)  </code></p>
+</li>
+</ul>
+</li>
+<li>
+<p>获取成员方法们</p>
+<ul>
+<li>
+<p><code>method[] getMethods()  </code></p>
+<pre><code class="language-java">        //获取所有public修饰方法
+        Method[] funcs = personClass.getMethods();
+        for (Method func:funcs){
+            System.out.println(func);
+        }
+</code></pre>
+<pre><code>public java.lang.String LearnJunit.domain.Person.toString()
+public java.lang.String LearnJunit.domain.Person.getName()
+public void LearnJunit.domain.Person.setName(java.lang.String)
+public int LearnJunit.domain.Person.getAge()
+public void LearnJunit.domain.Person.setAge(int)
+public void LearnJunit.domain.Person.eat()
+public void LearnJunit.domain.Person.eat(java.lang.String)
+public final void java.lang.Object.wait() throws java.lang.InterruptedException
+public final void java.lang.Object.wait(long,int) throws java.lang.InterruptedException
+public final native void java.lang.Object.wait(long) throws java.lang.InterruptedException
+public boolean java.lang.Object.equals(java.lang.Object)
+public native int java.lang.Object.hashCode()
+public final native java.lang.Class java.lang.Object.getClass()
+public final native void java.lang.Object.notify()
+public final native void java.lang.Object.notifyAll()
+</code></pre>
+<p>因为Person类继承的是Object对象，所以有些隐藏函数，即从Object继承下来的函数</p>
+</li>
+<li>
+<p><code>method getMethod(String name)  </code></p>
+<pre><code class="language-java">         //获取指定方法名称
+	    //名字，参数列表匹配
+        Method eat = personClass.getMethod(&quot;eat&quot;);
+        Method eat2 = personClass.getMethod(&quot;eat&quot;,String.class);
+        eat2.invoke(p,&quot;fish&quot;);
+</code></pre>
+</li>
+<li>
+<p><code>method[] getDeclaredMethods() </code></p>
+</li>
+<li>
+<p><code>method getDeclaredMethod(String name)</code></p>
+</li>
+</ul>
+</li>
+<li>
+<p>获取类名</p>
+<ul>
+<li><code>String getName()  </code></li>
+</ul>
+</li>
+</ul>
+</li>
+<li>
+<p><strong>操作</strong></p>
+<ul>
+<li>
+<p>Field成员变量</p>
+<p>设置值（get）</p>
+<pre><code class="language-java">        Field a = personClass.getField(&quot;a&quot;);
+        //获取成员变量a的值
+        Person p = new Person();
+        Object value = a.get(p);
+        System.out.println(value);
+</code></pre>
+<p>获取值（set）</p>
+<pre><code class="language-java">        a.set(p,&quot;John&quot;);
+        System.out.println(p);
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/82c1b1df3c6f87d9d99dacf16c3beb41.png" alt="image-20220316104826899" /></p>
+</li>
+<li>
+<p>暴力反射：<code>.setAccessible(true);</code> 对所有反射都有效</p>
+<p>搭配<code>getDeaclearedXXX</code>使用</p>
+<p>这仅仅是打印名称和比较，不需要设置；但是如果要对对象进行相关操作，必须设置；<strong>不设置的话操作受限</strong>。</p>
+</li>
+<li>
+<p>Constructor构造方法</p>
+<p>创建对象 <code>T newInstance(Object... initargs)  </code></p>
+<pre><code class="language-java">        //1.2创建对象
+        Object person = constructor.newInstance(&quot;Jonh&quot;,5);
+        System.out.println(person);
+</code></pre>
+<p>如果构造使用空参创造对象，可简化  class对象的 <code>newInstance</code></p>
+<pre><code class="language-java">        Object o = personClass.newInstance();
+        System.out.println(o);
+        System.out.println(&quot;-------------&quot;);
+</code></pre>
+</li>
+<li>
+<p>Method成员对象</p>
+<p>执行方法</p>
+<pre><code class="language-java">        //获取指定方法名称
+        Method eat = personClass.getMethod(&quot;eat&quot;);
+        //创建方法对象
+        Person p = new Person();
+        //执行方法
+        eat.invoke(p);
+</code></pre>
+<p>获取方法名称</p>
+<pre><code class="language-java">System.out.println(func.getName());
+</code></pre>
+</li>
+<li>
+<p>获取类名</p>
+<pre><code class="language-java">        //获取类名
+        String classname = personClass.getName();
+        System.out.println(classname);
+</code></pre>
+</li>
+</ul>
+</li>
+</ul>
+<h2>反射案例</h2>
+<p>案例：</p>
+<blockquote>
+<p>需求：一个框架，可以帮我们创建任意类的对象，并且执行任意方法</p>
+<p>不能改变该类的任何代码，
+创建任意对象执行任意方法</p>
+</blockquote>
+<p>一般方式：</p>
+<pre><code class="language-java">package LearnJunit.reflect;
+import LearnJunit.domain.Person;
+//假设框架类
+public class ReflectFramework {
+    public static void main(String[] args) {
+        //可以创建任意类对象，可以执行任意方法
+        Person p = new Person();
+        p.eat();
+    }
+}
+</code></pre>
+<p>这里的框架是提前学好的，不能改变；若要使用student类，则代码会改变</p>
+<p><strong>实现</strong></p>
+<ul>
+<li>配置文件</li>
+<li>反射</li>
+</ul>
+<p><strong>步骤</strong></p>
+<ol>
+<li>
+<p>将需要创建的对象的全类名和需要执行的方法定义在配置文件中</p>
+<p>src中创建配置文件</p>
+<pre><code class="language-properties">className=LearnJunit.domain.Person
+methodName=eat
+</code></pre>
+</li>
+<li>
+<p>在程序中加载读取配置文件</p>
+<pre><code class="language-java">        //1.加载配置文件
+        //1.1创建配置对象
+        Properties pro = new Properties();
+        //1.2加载配置文件，转换为集合
+        //1.2.1获取class目录下配置文件
+        ClassLoader classLoader = ReflectFramework.class.getClassLoader();//获得当前类路径
+        InputStream is = classLoader.getResourceAsStream(&quot;config.properties&quot;);//读取路径下的config.properties
+        pro.load(is);
+        //2.获取配置文件中定义的数据
+        String className = pro.getProperty(&quot;className&quot;);
+        String methodName = pro.getProperty(&quot;methodName&quot;);
+</code></pre>
+</li>
+<li>
+<p>使用反射技术来加载类文件进内存，创建对象并执行方法</p>
+<pre><code class="language-java">        //3.加载类进内存
+        Class cls = Class.forName(className);
+        //4.创建对象
+        Object obj = cls.newInstance();
+        //5.获取方法对象
+        Method method =  cls.getMethod(methodName);
+        method.invoke(obj);
+</code></pre>
+</li>
+</ol>
+<p>完整代码</p>
+<pre><code class="language-java">package LearnJunit.reflect;
+
+import LearnJunit.domain.Person;
+import LearnJunit.domain.Student;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.Properties;
+import java.util.stream.IntStream;
+
+//假设框架类
+public class ReflectFramework {
+    public static void main(String[] args) throws
+            IOException,
+            ClassNotFoundException,
+            IllegalAccessException,
+            InstantiationException,
+            InvocationTargetException,
+            NoSuchMethodException {
+        //可以创建任意类对象，可以执行任意方法
+        //不能改变该类的任何代码，
+        //创建任意对象执行任意方法
+                
+        //1.加载配置文件
+        //1.1创建配置对象
+        Properties pro = new Properties();
+        //1.2加载配置文件，转换为集合
+        //1.2.1获取class目录下配置文件
+        ClassLoader classLoader = ReflectFramework.class.getClassLoader();
+        InputStream is = classLoader.getResourceAsStream(&quot;config.properties&quot;);
+        pro.load(is);
+
+        //2.获取配置文件中定义的数据
+        String className = pro.getProperty(&quot;className&quot;);
+        String methodName = pro.getProperty(&quot;methodName&quot;);
+
+        //3.加载类进内存
+        Class cls = Class.forName(className);
+
+        //4.创建对象
+        Object obj = cls.newInstance();
+
+        //5.获取方法对象
+        Method method =  cls.getMethod(methodName);
+        method.invoke(obj);
+    }
+}
+</code></pre>
+<p>这样只需要修改配置文件就可以了</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/d2852d08ba40968840c750246f82618d.png" alt="image-20220316204511093" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/ab4ce8150d031bd095f52c6865fcdf8e.png" alt="image-20220316204553895" /></p>
+
+</div>
+</div></body>

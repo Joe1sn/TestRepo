@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-【Muud开发】2.HTTP服务改善</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/github.css">
+<link rel="stylesheet" href="/speciou.css"
+</head><body>    <div class="container">        <header class="main-header">            <h1 class="main-header__title uplize"><a class="main-header__title__link" href="/">Joe1sn's Cabinet</a></h1>            <nav class="main-header__nav">                <ul class="main-nav">                    <li class="main-nav__list"><a class="main-nav__list__link active" href="/" target="_self">HOME</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="/archives/"                            target="_self">ARCHIVE</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"                            target="_blank">GITHUB</a></li>                </ul>            </nav>        </header>    </div><div class="typora-export os-windows"><div id="write" class>
+<p><strong>2023-06-01 20:15:29</strong></p>
+<p>从0到1开发一个勉强能用的python web“框架”</p>
+<p>项目地址：https://github.com/Joe1sn/muud</p>
+<!--more-->
+<h1>主要改进</h1>
+<h2>6-1 返回报文设置</h2>
+<p>首先将原来的拼接字符串改为了Response类，实现HTTP报文字段的自定义</p>
+<p>这样可以大大简化<code>view.py</code>中的代码</p>
+<pre><code class="language-python">class Response():
+    def __init__(self, type=&quot;json&quot;, status_code=200, 
+                        reply=&quot;&quot;) -&gt; None:
+        self.content_type = content_types[type]
+        self.status_code = status_code
+        if type == &quot;json&quot;: 
+            self.reply = json.dumps(reply, ensure_ascii=False).encode('unicode_escape').decode()
+        else:   self.reply = reply
+        self.length = len(self.reply)
+
+    def consum(self) -&gt; str:
+        result = &quot;&quot;
+        result += &quot;HTTP/1.1 {status_code} {msg}\r\n&quot;.format(
+            status_code=self.status_code,   msg=status_code_dict[self.status_code])
+        result += &quot;Content-Type: {type}\r\n&quot;.format(
+            type = self.content_type)
+        result += &quot;Content-Length: {length}\r\n&quot;.format(
+            length=self.length)
+        result += &quot;\r\n&quot;
+        result += self.reply
+        return result
+</code></pre>
+<p>这样就可以更简单的编写视图函数</p>
+<pre><code class="language-python">@http_api
+def html_test(http_request):
+    data = &quot;&lt;html&gt;&lt;body&gt;&lt;h1&gt;Hello, world!&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;&quot;
+    result = Response(reply=data,type=&quot;html&quot;)
+    return result.consum().encode()
+</code></pre>
+<p>不过任然欠缺文件服务，不过在<code>epoll</code>服务器的send部分修改就行了，更复杂的还涉及到文件上传等，后续实现http.server这种服务效果，不然静态网页加载很麻烦。</p>
+<h2>6-2 设置更多的content_type</h2>
+<pre><code class="language-python">content_types = {
+    &quot;text&quot;: &quot;text/plain&quot;,
+    &quot;html&quot;: &quot;text/html&quot;,    #HTML文档
+    &quot;css&quot; : &quot;text/css&quot;,     #CSS样式表
+    &quot;js&quot; : &quot;text/javascript&quot;,   #JavaScript脚本
+
+    &quot;json&quot;: &quot;application/json&quot;,
+    &quot;pdf&quot;: &quot;application/pdf&quot;,
+    &quot;xml&quot;: &quot;application/xml&quot;,
+    &quot;bin&quot;: &quot;application/octet-stream&quot;,  #[特质]
+
+    &quot;jpeg&quot;: &quot;image/jpeg&quot;,   #JPEG图像
+    &quot;png&quot;: &quot;image/png&quot;,     #PNG图像
+    &quot;gif&quot;: &quot;image/gif&quot;,     #GIF图像
+
+    &quot;mpeg&quot;: &quot;audio/mpeg&quot;,   #MPEG音频
+    &quot;wav&quot;: &quot;audio/wav&quot;,     #WAV音频
+
+    &quot;mp4&quot; : &quot;video/mp4&quot;,    #MP4视频
+    &quot;mpeg&quot; : &quot;video/mpeg&quot;,  #MPEG视频
+}
+</code></pre>
+<p>Response的返回改为bytes类型</p>
+<pre><code class="language-python">    def consum(self) -&gt; bytes:
+        result = &quot;&quot;
+        result += &quot;HTTP/1.1 {status_code} {msg}\r\n&quot;.format(
+            status_code=self.status_code,   msg=status_code_dict[self.status_code])
+        result += &quot;Content-Type: {type}\r\n&quot;.format(
+            type = self.content_type)
+        result += &quot;Content-Length: {length}\r\n&quot;.format(
+            length=self.length)
+        result += &quot;\r\n&quot;
+
+        result = result.encode()
+        if type(self.reply) == bytes:
+            result += self.reply
+        else:   result += self.reply.encode()
+        return result
+</code></pre>
+<p>这样就能直接访问各种文件了，方便下一步渲染</p>
+<pre><code class="language-python">@http_api
+def file_test(http_request):
+    result=&quot;&quot;
+    with open(r&quot;/mnt/d/Github/muud/test/test.pdf&quot;,&quot;rb&quot;) as f:
+        result = f.read()
+    result = Response(reply=result,type=&quot;pdf&quot;)
+    return result.consum()
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/82845027c13d1eb42726354e98f2a0bc.png" alt="image-20230603110534674" /></p>
+<h2>6-3~4 文件上传</h2>
+<p>这部分写的挺久的，因为涉及到epoll模型的改善，后面回继续改进这个模块</p>
+<p>首先有这两个视图函数</p>
+<pre><code class="language-python">@http_api
+def file_upload(http_request):
+    result=&quot;&quot;
+    with open(r&quot;/mnt/d/Github/muud/test/file_upload.html&quot;,&quot;rb&quot;) as f:
+        result = f.read()
+    result = Response(reply=result,type=&quot;html&quot;)
+    return result.consum()
+
+@http_api
+def upload(http_request):
+    result=&quot;&quot;
+    info(&quot;FILE Content&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&quot;)
+    # info(http_request.data[&quot;len&quot;]/1024,&quot;KB&quot;)
+    name = http_request.data[&quot;filename&quot;]
+    # print(http_request.data[&quot;file&quot;][:0x20])
+    with open(r&quot;/mnt/d/Github/muud/test/&quot;+name,&quot;wb&quot;) as f:
+        result = f.write(http_request.data[&quot;file&quot;])
+    data = &quot;&lt;html&gt;&lt;body&gt;&lt;h1&gt;okok&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;&quot;
+    result = Response(reply=data,type=&quot;html&quot;,status_code=200)
+    return result.consum()
+</code></pre>
+<p>目前参考了Django的上传，把数据结果收集在request中然后处理</p>
+<p>那么就涉及HttpRequest的处理</p>
+<p>首先新增了两个字段</p>
+<pre><code class="language-python">        self.length = 0     #总长度
+        self.cur_len = 0    #当前长度
+</code></pre>
+<p>从这个判断文件上传是否完成，然后就是消息的提取</p>
+<pre><code class="language-python">#文件上传，返回bytes类型数据
+elif &quot;multipart&quot; in content_type:
+    pre_len = len(self.raw_data.split(b&quot;\r\n\r\n&quot;)[0])+4
+    raw_data = self.raw_data[pre_len:]
+    self.cur_len = len(raw_data)
+    self.data={&quot;name&quot;:&quot;&quot;,   &quot;filename&quot;:&quot;&quot;,  &quot;file&quot;:b&quot;&quot;, &quot;len&quot;:0}
+    boundary = b&quot;--&quot; + r_boundary.search(self.raw_data).group(1)
+    file_info = raw_data.split(boundary)[1].split(b&quot;\r\n&quot;)[1]
+
+    for attribute in file_info.split(b&quot;; &quot;):
+        #   获得名字
+        if b&quot;name&quot; in attribute and b&quot;=&quot; in attribute and not attribute.lower().startswith(b&quot;content&quot;):
+            if attribute.split(b&quot;=&quot;)[0] == b&quot;name&quot;:
+                self.data[&quot;name&quot;] = b&quot;&quot;.join(attribute.split(b&quot;=&quot;)[1:])[1:-1].decode()
+            elif attribute.split(b&quot;=&quot;)[0] == b&quot;filename&quot;:
+                #   获得原始文件名
+                self.data[&quot;filename&quot;] = b&quot;&quot;.join(attribute.split(b&quot;=&quot;)[1:])[1:-1].decode()
+
+    file_type = raw_data.split(boundary)[1].split(b&quot;\r\n&quot;)[2]
+    pre_len = len(file_info) + len(file_type) + 2*4 #前置长度
+
+    self.data[&quot;file&quot;] = self.raw_data.split(boundary)[1][pre_len:-2]
+    self.data[&quot;len&quot;] = len(self.data[&quot;file&quot;])
+</code></pre>
+<p>由于使用了epoll模型，当上传的数据长度小于总长度时继续上传，完成后再进行处理，那么server就会有如下修改</p>
+<p>数据可读时继续读取客户端发送过来的数据</p>
+<pre><code class="language-python">elif event &amp; select.EPOLLIN:
+    # 有数据可读
+    try:
+        data = b&quot;&quot;
+        data = connections[fileno].recv(1024*1024*10)
+        # print(&quot;data from server\n&quot;,data)
+        if data:
+            requests[fileno] += data
+</code></pre>
+<p>由于我的epoll对每个发送过来的package都有一个response，所以需要修改</p>
+<pre><code class="language-python"># 处理请求并生成响应
+for fileno, data in requests.items():
+    if b&quot;HTTP&quot; in data or b&quot;http&quot; in data:
+        # 解析请求头部
+        http = HTTPRequest(data=data, fileno=fileno, connections=connections)
+        
+        if http.cur_len &lt; http.length:
+            pass
+        else:
+            http.show()
+            http_route = HTTPRouter(http)
+            response = http_route.route()
+            responses[fileno] = response
+
+            connections[fileno].send(response)
+
+            # 构造响应头部和内容
+            # 清空请求缓冲区
+            response = b''
+            data = b''
+            requests[fileno] = b''
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/d560daa9e9524c8c670e0fb8ee5109d2.png" alt="image-20230604123749998" /></p>
+<p>然后测试了下效率，面对小文件的时候效率还说得过去（&lt;10MB），大文件的话又是使用的是对应<code>fd</code>的data进行拼接，增大了内存开销和CPU开销（不知道使用c的指针会不会快一些），这也是后续需要优化的东西</p>
+<p><img src="https://img.joe1sn.top/uploads/big/6ec85adf5a170138cfaf12cf96bf7bc5.png" alt="小文件" /></p>
+<p><img src="https://img.joe1sn.top/uploads/big/aa1d26b05febf943087b4b4fba07ba4a.png" alt="大文件" /><img src="https://img.joe1sn.top/uploads/big/516a0bd7170f4b3101a24eaf0b62fc58.png" alt="大文件2" /></p>
+<p>更大的文件后面会出现指数级下降，不过这里也可以看出来基于TCP的拥塞控制，单次发包最大为128kb，分块传输，后续可以针对这些特性进行改进。</p>
+<h2>6-6 重定向</h2>
+<pre><code class="language-python">@http_api
+def redirect(http_request):
+    data= &quot;http://www.qq.com&quot;
+    result = Response(reply=data,type=&quot;text&quot;,status_code=302)
+    return result.consum()
+</code></pre>
+<p>主要就是通过302跳转进行重定向，然后在返回报文哪里设置了几个新的参数</p>
+<pre><code class="language-python">    def consum(self) -&gt; bytes:
+        result = &quot;&quot;
+        if self.status_code == 302:
+            result += &quot;HTTP/1.1 {status_code} {msg}\r\nLocation: {location}\r\n\r\n&quot;.format(
+                status_code=self.status_code,   msg=status_code_dict[self.status_code], location=self.reply)
+        else:
+            result += &quot;HTTP/1.1 {status_code} {msg}\r\n&quot;.format(
+                status_code=self.status_code,   msg=status_code_dict[self.status_code])
+        result += &quot;Content-Type: {type}\r\n&quot;.format(
+            type = self.content_type)
+        result += &quot;Content-Length: {length}\r\n&quot;.format(
+            length=self.length)
+        result += &quot;\r\n&quot;
+
+        result = result.encode()
+        if self.status_code == 302:
+            pass
+        else:
+            if type(self.reply) == bytes:
+                result += self.reply
+            else:   result += self.reply.encode()
+        return result
+</code></pre>
+<p>之后可以在utils里面打包这些方法，我这里放在http_response下面</p>
+<pre><code class="language-python"># 重定向
+def redirect(http_url):
+    data= str(http_url)
+    result = Response(reply=data,type=&quot;text&quot;,status_code=302)
+    return result.consum()	
+</code></pre>
+
+</div>
+</div></body>

