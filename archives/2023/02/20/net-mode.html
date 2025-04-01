@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-net_mode</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2023-02-20 10:57:20</strong></p>
+<h1>简述网络协议模型实现</h1>
+<p>最简单的TCP/IP也要分很多实现的细节，以最简单的C/S模型为例子</p>
+<ul>
+<li>同步阻塞</li>
+<li>同步非阻塞</li>
+<li>select/poll</li>
+<li>epoll</li>
+</ul>
+<!--more-->
+<h1>基础模型</h1>
+<p><img src="https://img.joe1sn.top/uploads/medium/92571d06b546e35028dd5b7f00336582.png" alt="" /></p>
+<p>四种方式的解释</p>
+<p><img src="https://img.joe1sn.top/uploads/big/2289ba341a831af29e9e7dbec9c6571e.png" alt="" /></p>
+<p>使用python创建最简单的一个C/S代码</p>
+<p><code>server.py</code></p>
+<pre><code class="language-python">import socket
+
+# 创建一个 TCP/IP socket 对象
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# 获取本地主机名
+host = socket.gethostname()
+port = 9999
+
+# 绑定端口号
+server_socket.bind((host, port))
+
+# 开始监听，最大连接数为 5
+server_socket.listen(5)
+
+print('服务器已启动，等待客户端连接...')
+
+while True:
+    # 等待客户端连接
+    client_socket, addr = server_socket.accept()
+    print('客户端已连接，地址为：%s' % str(addr))
+
+    # 接收客户端请求数据
+    data = client_socket.recv(1024).decode()
+
+    # 处理请求并返回响应数据
+    response = 'Hello, ' + data
+    client_socket.send(response.encode())
+
+    # 关闭客户端连接
+    client_socket.close()
+</code></pre>
+<p><code>basic_client.py</code></p>
+<pre><code class="language-python">import socket
+
+# 创建一个 TCP/IP socket 对象
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# 获取本地主机名
+host = socket.gethostname()
+port = 9999
+
+# 连接服务器
+client_socket.connect((host, port))
+
+# 发送请求数据
+request_data = 'World!'
+client_socket.send(request_data.encode())
+
+# 接收响应数据
+response_data = client_socket.recv(1024).decode()
+print('服务器响应数据为：%s' % response_data)
+
+# 关闭客户端连接
+client_socket.close()
+
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/dde744ce868ebae81aca0b9dc8bf26a0.png" alt="" /></p>
+<h1>同步阻塞</h1>
+<p>最简单的一个模型了，但是由于循环所以会一直阻塞下去</p>
+<p>要想长期服务那么一个server就必须对应一个client，最终过多的client导致server端口耗尽，而且阻塞导致并发量过低。不过是最简单的实现方式</p>
+<p><img src="https://img.joe1sn.top/uploads/medium/8fdf8ca835fa7c0dd02091fbde7a4998.png" alt="" /></p>
+<p>服务端必须处理完一个完整的客户端才能返回，比如说上传文件</p>
+<ol>
+<li>先连接的clientA上传文件（大约30分钟，可以理解为<strong>一直阻塞</strong>）</li>
+<li>稍微晚一点的clientB上传文件，由于clientA还未上传完成独占了server，造成超时或者连接丢失</li>
+</ol>
+<h1>同步非阻塞</h1>
+<p>对于上面代码的问题我们可以对产生阻塞的点<code>server_socket.accept()</code>进行一个设置，将其fd设置为 <strong>非阻塞模式</strong>。这样每次都会返回一个值，然后判断值是否合法来判断是否执行操作，如果非法那么就去处理下一个fd。</p>
+<p>关于处理fd也可以轻易想到两种处理方式</p>
+<ul>
+<li>主线程处理完成当前fd后，判断下一个fd</li>
+<li>开启一个子线程进行后续处理，主线程判断下一个fd</li>
+</ul>
+<p>使用python中的<code>try;except</code>可以简单实现</p>
+<p><code>nonstop_server.py</code></p>
+<pre><code class="language-python">import socket
+
+# 创建一个 TCP/IP socket 对象
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# 获取本地主机名
+host = socket.gethostname()
+port = 9999
+
+# 绑定端口号
+server_socket.bind((host, port))
+
+# 开始监听，最大连接数为 5
+server_socket.listen(5)
+
+# 设置非阻塞模式
+server_socket.setblocking(False)
+
+print('服务器已启动，等待客户端连接...')
+
+while True:
+    try:
+        # 等待客户端连接
+        client_socket, addr = server_socket.accept()
+        print('客户端已连接，地址为：%s' % str(addr))
+
+        # 设置非阻塞模式
+        client_socket.setblocking(False)
+
+        # 接收客户端请求数据
+        request_data = ''
+        while True:
+            try:
+                data = client_socket.recv(1024).decode()
+                if not data:
+                    break
+                request_data += data
+            except BlockingIOError:
+                break
+
+        # 处理请求并返回响应数据
+        response_data = 'Hello, ' + request_data
+        while True:
+            try:
+                sent = client_socket.send(response_data.encode())
+                if sent == len(response_data):
+                    break
+                response_data = response_data[sent:]
+            except BlockingIOError:
+                pass
+
+        # 关闭客户端连接
+        client_socket.close()
+    except BlockingIOError:
+        pass
+</code></pre>
+<ol>
+<li>
+<p><img src="https://img.joe1sn.top/uploads/big/28a861a793f285dba551fa2e1d1434df.png" alt="" /></p>
+<p>尝试建立socket，没有就Pass</p>
+</li>
+<li>
+<p><img src="https://img.joe1sn.top/uploads/big/73680db02f4d3b8dc91998a787c3674b.png" alt="" /></p>
+<p>如果阻塞则立刻跳出循环，准备返回数据</p>
+</li>
+<li>
+<p><img src="https://img.joe1sn.top/uploads/big/3114cb05541fe5ad0aa1e17d91982eca.png" alt="" /></p>
+<p>同样在发送时也会检测是否阻塞</p>
+</li>
+</ol>
+<p><code>nonstop_client.py</code></p>
+<pre><code class="language-python">import socket
+import time
+
+# 创建一个 TCP/IP socket 对象
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# 获取本地主机名
+host = socket.gethostname()
+port = 9999
+
+# 设置非阻塞模式
+client_socket.setblocking(False)
+
+# 连接服务器
+while True:
+    try:
+        client_socket.connect((host, port))
+        break
+    except BlockingIOError:
+        pass
+
+# 发送请求数据
+request_data = 'World!'
+while True:
+    try:
+        sent = client_socket.send(request_data.encode())
+        if sent == len(request_data):
+            break
+        request_data = request_data[sent:]
+    except BlockingIOError:
+        pass
+
+# 接收响应数据
+response_data = ''
+while True:
+    try:
+        data = client_socket.recv(1024).decode()
+        if not data:
+            break
+        response_data += data
+    except BlockingIOError:
+        pass
+
+print('服务器响应数据为：%s' % response_data)
+
+# 关闭客户端连接
+client_socket.close()
+</code></pre>
+<p>但是这样会造成系统的频繁调用，同时也会造成以下错误</p>
+<img src="https://img.joe1sn.top/uploads/big/5e4d48651f22cdfa4534135b7568d51c.png" alt="image-20230219150020341" style="zoom:50%;" />
+<p>个别客户端连接失败。</p>
+<p>更推荐这种写法来测试</p>
+<pre><code class="language-python">import socket
+from time import sleep
+
+# 创建一个 TCP/IP socket 对象
+client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+# 获取本地主机名
+host = socket.gethostname()
+port = 9999
+
+client_socket.connect((host, port))
+request_data = 'World!'
+client_socket.send(request_data.encode())
+sleep(5)			#模拟阻塞
+response_data = client_socket.recv(1024).decode()
+print('服务器响应数据为：%s' % response_data)
+client_socket.close()
+</code></pre>
+<p><strong>确实能在个别客户端阻塞时处理其他客户端</strong></p>
+<p>因为如果没有连接则一直<code>while(1)</code>，会造成系统资源的浪费</p>
+<h1>IO多路复用</h1>
+<p>这个再CSAPP中提到了，不过我一直都无法参透其知识，可能是代码写少了吧</p>
+<h2>select</h2>
+<p><img src="https://img.joe1sn.top/uploads/medium/9f0247be8ef5c148ef085e84a917a6ba.png" alt="" /></p>
+<p>之后用户态会再次查找一遍，如果内核态没有准备就绪的那么则会一直便利，相比较于同步非阻塞模型减少了用户向内核态切换的过程</p>
+<p><code>select_server.py</code></p>
+<pre><code class="language-python">import select
+import socket
+
+# 创建套接字
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server_socket.bind(('127.0.0.1', 8000))
+server_socket.listen(5)
+print(&quot;Listening on 127.0.0.1:8000...&quot;)
+
+# 读取和写入套接字列表
+inputs = [server_socket]
+outputs = []
+
+while True:
+    # 使用 select 监听套接字
+    readable, writable, exceptional = select.select(inputs, outputs, inputs)
+
+    # 处理可读套接字
+    for sock in readable:
+        if sock is server_socket:
+            # 如果是服务端套接字，说明有新连接
+            client_socket, address = server_socket.accept()
+            print(f&quot;New connection from {address}&quot;)
+            # 将新连接的套接字加入读取和写入列表
+            inputs.append(client_socket)
+            outputs.append(client_socket)
+        else:
+            # 如果是客户端套接字，说明有数据可读
+            data = sock.recv(1024)
+            if data:
+                print(f&quot;Received: {data.decode('utf-8').strip()}&quot;)
+            else:
+                # 如果客户端关闭连接，将套接字从列表中移除
+                print(f&quot;Connection closed by {sock.getpeername()}&quot;)
+                inputs.remove(sock)
+                outputs.remove(sock)
+                sock.close()
+
+    # 处理可写套接字
+    for sock in writable:
+        pass
+
+    # 处理异常套接字
+    for sock in exceptional:
+        inputs.remove(sock)
+        outputs.remove(sock)
+        sock.close()
+        print(f&quot;Exceptional condition on {sock.getpeername()}&quot;)
+</code></pre>
+<p>这段代码使用 <code>select</code> 监听可读套接字。</p>
+<ul>
+<li>如果有新的连接，将新连接的套接字加入读取和写入列表。</li>
+<li>如果是客户端套接字，说明有数据可读，将数据回显到客户端；</li>
+<li>如果客户端关闭连接，则将套接字从列表中移除并关闭。</li>
+<li>如果发生异常，将套接字从列表中移除并关闭。</li>
+</ul>
+<h2>poll</h2>
+<p><img src="https://img.joe1sn.top/uploads/big/c20f946b3dbf4cbb82378c0484485aac.png" alt="" /></p>
+<h2>epoll(event poll)</h2>
+<p>结合代码理解</p>
+<p><code>epoll_server.py</code></p>
+<pre><code class="language-python">import select
+import socket
+
+# 创建套接字并绑定到本地地址
+server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server_socket.bind(('127.0.0.1', 8000))
+server_socket.listen(10)
+print(&quot;Listening on 127.0.0.1:8000.&quot;)
+
+# 创建 epoll 对象并注册监听套接字
+epoll = select.epoll()
+epoll.register(server_socket.fileno(), select.EPOLLIN)
+
+# 用字典存储每个套接字的数据缓冲区
+buffers = {}
+
+while True:
+    events = epoll.poll() # 阻塞，等待事件发生
+
+    for fileno, event in events:
+        if fileno == server_socket.fileno():
+            # 如果是监听套接字，说明有新连接
+            client_socket, address = server_socket.accept()
+            print(f&quot;New connection from {address}.&quot;)
+            epoll.register(client_socket.fileno(), select.EPOLLIN)
+            buffers[client_socket.fileno()] = b''
+        elif event &amp; select.EPOLLIN:
+            # 如果是已连接套接字且有数据可读，读取数据并添加到缓冲区
+            data = buffers[fileno] + os.read(fileno, 1024)
+            if not data:
+                # 如果读取到空数据，说明连接关闭，注销套接字并删除缓冲区
+                epoll.unregister(fileno)
+                os.close(fileno)
+                del buffers[fileno]
+                continue
+            buffers[fileno] = data
+        elif event &amp; select.EPOLLOUT:
+            # 如果是已连接套接字且可写，将缓冲区数据发送出去
+            data = buffers[fileno]
+            os.write(fileno, data)
+            buffers[fileno] = b''
+</code></pre>
+<ol>
+<li>
+<p>创建 <code>epoll</code> 对象：使用 <code>epoll_create</code> 系统调用创建一个 <code>epoll</code> 对象，并得到一个文件描述符。</p>
+<blockquote>
+<p><code>epoll_create()</code>  returns  a file descriptor referring to the new epoll instance.  This file descriptor is used for all the subsequent calls to the epoll interface.  When no longer required, the file descriptor returned by epoll_create() should be closed by  using  close(2).   When  all  file descriptors referring to an epoll instance have been closed, the kernel destroys the instance and releases the associated resources for reuse.</p>
+</blockquote>
+</li>
+<li>
+<p>添加事件到 <code>epoll</code> 对象：使用 <code>epoll_ctl</code> 系统调用将要监听的文件描述符和对应的事件添加到 <code>epoll</code> 对象中，包括可读事件、可写事件、异常事件等。这里的事件类型是一个位掩码，可以使用 <code>EPOLLIN</code> 表示可读事件，使用 <code>EPOLLOUT</code> 表示可写事件，使用 <code>EPOLLPRI</code> 表示异常事件等。</p>
+<p><code>int epoll_ctl(int epfd, int op, int fd, struct epoll_event *event);</code></p>
+<ul>
+<li>
+<p>epfd：可以理解为<code>epoll_create</code>返回地<code>fd</code></p>
+</li>
+<li>
+<p>op：对应的三种<code>fd</code>操作，添加<code>EPOLL_CTL_ADD</code>，修改<code>EPOLL_CTL_MOD</code>，删除<code>EPOLL_CTL_DEL</code></p>
+</li>
+<li>
+<p>epoll_event：</p>
+<img src="https://img.joe1sn.top/uploads/big/4f3bd81dee85262a127efab6ff2dd45c.png" style="zoom:50%;" />
+</li>
+</ul>
+<p>成功返回0，失败返回-1，从errno返回报错</p>
+</li>
+<li>
+<p>等待事件发生：使用 <code>epoll_wait</code> 系统调用等待事件的发生，一旦有事件发生，就可以得到相应的文件描述符和事件类型，可以使用 <code>epoll_event</code> 结构体来保存这些信息。<code>epoll_wait</code> 系统调用可以设置一个超时时间，如果在指定的时间内没有事件发生，该调用将会超时返回。</p>
+</li>
+<li>
+<p>处理事件：一旦有事件发生，就可以对相应的文件描述符进行操作，例如读取数据、发送数据等。如果事件类型是可读事件，则可以使用 <code>read</code> 系统调用读取数据；如果事件类型是可写事件，则可以使用 <code>write</code> 系统调用发送数据等。</p>
+</li>
+<li>
+<p>重复步骤 2-4：在处理完一个事件之后，可以再次使用 <code>epoll_ctl</code> 系统调用将文件描述符和对应的事件添加到 <code>epoll</code> 对象中，然后等待下一个事件的发生。</p>
+</li>
+</ol>
+<h1>引用</h1>
+<p>https://www.bilibili.com/video/BV1r54y1f7bU/</p>
+<p>https://www.ithome.com/0/644/835.htm</p>
+<p>https://chat.openai.com/</p>
+
+</div>
+</div></body>

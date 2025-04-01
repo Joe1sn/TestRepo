@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-windows内核驱动 6-链表与进程</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2024-03-20 09:24:51</strong></p>
+<p>感觉和之前学的bh文章有大量重复</p>
+<!--more-->
+<h1>记录进程</h1>
+<pre><code class="language-cpp">typedef struct _Process {
+    LIST_ENTRY list;
+    HANDLE pid;
+    PEPROCESS pEprocessObj;
+    char ProcessName[0x10];
+} MyProcess, *pMyProcess;
+</code></pre>
+<p>两个extern需要声明</p>
+<pre><code class="language-cpp">NTKERNELAPI PUCHAR PsGetProcessImageFileName(PEPROCESS Process);
+NTKERNELAPI NTSTATUS PsLookupProcessByProcessId(HANDLE ProcessId, PEPROCESS* Process);
+
+VOID ProcessNotify(HANDLE pid, HANDLE pid2, BOOLEAN value) {
+    UNREFERENCED_PARAMETER(pid);
+    if (value) {
+        DbgPrint(&quot;Process Created %d\n&quot;, pid2);
+        PEPROCESS CurrentProc = NULL;//PsGetCurrentProcess();
+        PsLookupProcessByProcessId(pid2, &amp;CurrentProc);
+        if (!CurrentProc) {
+            return;
+        }
+
+        PUCHAR processname = PsGetProcessImageFileName(CurrentProc);
+        DbgPrint(&quot;Process Name %s\n&quot;, processname);
+
+    }
+
+    return;
+}
+....//驱动加载
+    LIST_ENTRY listhead = { 0 };
+    InitializeListHead(&amp;listhead);
+    PsSetCreateProcessNotifyRoutine(ProcessNotify, FALSE);
+....//驱动卸载
+    PsSetCreateProcessNotifyRoutine(ProcessNotify, TRUE);
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/a607afcc046ab446e19d6c094816f690.png" alt="image-20240320101340059" /></p>
+<p>将获取到的链表进行链接</p>
+<pre><code class="language-cpp">VOID ProcessNotify(HANDLE pid, HANDLE pid2, BOOLEAN value) {
+    UNREFERENCED_PARAMETER(pid);
+    if (value) {
+        DbgPrint(&quot;Process Created %d\n&quot;, pid2);
+        PEPROCESS CurrentProc = NULL;//PsGetCurrentProcess();
+        PsLookupProcessByProcessId(pid2, &amp;CurrentProc);
+        if (!CurrentProc) {
+            return;
+        }
+
+        pMyProcess PMyProcess = ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MyProcess),'cpym');
+        if (PMyProcess) {
+            RtlZeroMemory(PMyProcess, sizeof(MyProcess));
+            
+            // init value
+            PMyProcess-&gt;pid = pid2;
+            PMyProcess-&gt;pEprocessObj = CurrentProc;
+            PMyProcess-&gt;ProcessName = PsGetProcessImageFileName(CurrentProc);
+            KIRQL irql = 0;
+            
+            KeAcquireSpinLock(&amp;kSpinLock, &amp;irql);
+            InsertTailList(&amp;listhead, &amp;(PMyProcess-&gt;list));
+            KeReleaseSpinLock(&amp;kSpinLock, irql);
+        }
+        PUCHAR processname = PsGetProcessImageFileName(CurrentProc);
+        DbgPrint(&quot;Process Name %s\n&quot;, processname);
+
+    }
+
+    return;
+}
+
+
+//....
+NTSTATUS
+DriverEntry(PDRIVER_OBJECT  DriverObject, PUNICODE_STRING RegistryPath)
+{
+// ....
+    InitializeListHead(&amp;listhead);
+    PsSetCreateProcessNotifyRoutine(ProcessNotify, FALSE);
+
+    return Status;
+}
+
+//...
+VOID
+DriverUnload(PDRIVER_OBJECT DriverObject)
+{
+    UNREFERENCED_PARAMETER(DriverObject);
+    DbgPrint(&quot;Driver Stopping -&gt; %wZ\n&quot;, &amp;DriverObject-&gt;DriverName);
+    DbgPrint(&quot;Device Stopping\n&quot;);
+    if (DriverObject-&gt;DeviceObject) {
+        IoDeleteDevice(DriverObject-&gt;DeviceObject);
+
+        UNICODE_STRING symname = { 0 };
+        RtlInitUnicodeString(&amp;symname, SYM_NAME);
+        IoDeleteSymbolicLink(&amp;symname);
+    }
+    PsSetCreateProcessNotifyRoutine(ProcessNotify, TRUE);
+
+    PLIST_ENTRY temp = NULL;
+    pMyProcess tempMy = NULL;
+    while (listhead.Blink != &amp;listhead)
+    {
+        temp = RemoveTailList(&amp;listhead);
+        tempMy = CONTAINING_RECORD(temp, MyProcess, list);
+
+        DbgPrint(&quot;link -- name: %s -- pid: %d -- obj: %p\n&quot;, tempMy-&gt;ProcessName, tempMy-&gt;pid, tempMy-&gt;pEprocessObj);
+        ExFreePool(temp);
+    }
+
+}
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/10fa90fec961ee887b47e7671a155e8a.png" alt="image-20240320104220909" /></p>
+<h1>禁止程序执行</h1>
+<p>关于进程的遍历这里给出第二种方式，使用<code>PsSetCreateProcessNotifyRoutineEx</code>中使用<code>PPS_CREATE_NOTIFY_INFO</code></p>
+<p>这个API有一个很坑的地方就是必须在 <strong>链接器</strong> 中加上<code>/INTEGRITYCHECK </code></p>
+<p>回调函数</p>
+<pre><code class="language-cpp">VOID MyBlockProcessNotify(PEPROCESS Process, HANDLE ProcessId, PPS_CREATE_NOTIFY_INFO CreateInfo) {
+    //UNREFERENCED_PARAMETER(Process);
+    //DbgPrint(&quot;ProcessCreated\n&quot;);
+    if (CreateInfo) {
+        CHAR Targetp[] = &quot;calc.exe&quot;;
+        PCHAR ProcessName = (PCHAR)PsGetProcessImageFileName(Process);
+        DbgPrint(&quot;now running: %s, pid: %d\n&quot;, ProcessName, ProcessId);
+
+        if (!strcmp(Targetp, ProcessName)) {
+            CreateInfo-&gt;CreationStatus = STATUS_UNSUCCESSFUL;
+        }
+    }
+}
+</code></pre>
+<p>注册和释放</p>
+<pre><code class="language-cpp">    PsSetCreateProcessNotifyRoutineEx(MyBlockProcessNotify, FALSE);
+    PsSetCreateProcessNotifyRoutineEx(MyBlockProcessNotify, TRUE);
+
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/bc3576b1573b2f1dcc66ea581758eb23.png" alt="image-20240320112936409" /></p>
+<h1>参考</h1>
+<p>https://cloud.tencent.com/developer/article/2195942</p>
+<p>https://www.bilibili.com/video/BV1QJ411A7kR</p>
+
+</div>
+</div></body>

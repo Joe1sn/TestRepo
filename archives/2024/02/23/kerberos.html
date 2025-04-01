@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-【内网】探索Windows内网的Kerberos协议</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2024-02-23 12:29:23</strong></p>
+<p>感恩学校扎实的密码学功底，分析起来也是很简单的</p>
+<!--more-->
+<p>说白了就一张图</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/173ba503f8f4d7d2cbc88312cb0a2551.png" alt="img" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/1946078615b1e4c4c817b0bf733df49d.png" alt="img" /></p>
+<h1>攻击方式</h1>
+<h2>黄金票据</h2>
+<p>第三步中 使用 KDC 特定账户 Krbtgt 的 NTLM-Hash 时，如果我们有了该<code>NTML-Hash</code>那么就能做到伪造TGT</p>
+<p>该方法由于需要DC的<code>NTLM-Hash</code>，所以用于留后门</p>
+<p>假设我们拿到了DC上administrator权限的shell</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/682d17bfb67add232b394fad39c00485.png" alt="image-20240222212152261" /></p>
+<p>抓取Hash</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/bc35669581bb749a80113b2d145f4ac6.png" alt="image-20240222212207346" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/88027e45108649714df4180ab9a0df53.png" alt="image-20240222212223689" /></p>
+<ul>
+<li>CS使用的命令为：lsadump</li>
+<li>相关项目：https://github.com/Xre0uS/MultiDump</li>
+</ul>
+<p>获得管理员SID</p>
+<ul>
+<li>mimikatz一把梭</li>
+<li><code>wmic useraccount get name,sid</code></li>
+</ul>
+<p>切换到域内用户的普通权限，制作黄金票据</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/698af4ca909c2457fd7e9bfce63ee691.png" alt="image-20240223092136452" /></p>
+<p><img src="D:%5CBlog%5Cgithub%5Csource_posts%5Ckerberos.assets%5Cimage-20240223095513608.png" alt="image-20240223095513608" /></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/327782e54254105201209ef3d5936f2e.png" alt="image-20240223092217749" /></p>
+<p><strong>横向移动</strong></p>
+<p>先尝试访问文件夹</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/f947a652d48ce2c94f6f5d9dd0888f94.png" alt="image-20240223095556996" /></p>
+<p>原因：https://support.microsoft.com/zh-cn/topic/ms16-101-windows-%E8%BA%AB%E4%BB%BD%E9%AA%8C%E8%AF%81%E6%96%B9%E6%B3%95%E7%9A%84%E5%AE%89%E5%85%A8%E6%9B%B4%E6%96%B0%E7%A8%8B%E5%BA%8F%E8%AF%B4%E6%98%8E-2016-%E5%B9%B4-8-%E6%9C%88-9-%E6%97%A5-be16a40d-d7e2-c4b2-d885-6a22cff3cb77</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/f0814cff5a356db265a78fcdfb6ba1f3.png" alt="image-20240223095722593" /></p>
+<p>貌似是WinServer2012的硬伤了，虚拟机必须用一些补丁才能用vmtools...</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/5961dacc540e39be013e953ae0c28242.png" alt="image-20240223100706455" /></p>
+<h2>白银票据</h2>
+<p>需要知道Server的<code>HTLM-Hash</code></p>
+<p>使用该值伪造TGT，在第七步中发送给Server</p>
+<blockquote>
+<p>但是在有些服务中并没有验证 PAC 这一步，这也是白银票据能成功的前提，因为就算拥有用户的 Hash，可以伪造 TGS，但是也不能制作 PAC，PAC 当然也验证不成功，但是有些服务不去验证 PAC，这是白银票据成功的前提。</p>
+</blockquote>
+<h2>MS14-06</h2>
+<p>问题出在第四步</p>
+<p>KDC会根据客户端指定PAC中数字签名的加密算法，以及PAC的加密算法，来校验PAC的合法性。这使得攻击者可通过伪造PAC，修改PAC中的SID，导致KDC判断攻击者为高权限用户，从而导致权限提升漏洞的产生</p>
+
+</div>
+</div></body>

@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-【免杀】Windows Inline Hook小结</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2024-03-15 13:47:31</strong></p>
+<p>Inline Hook还是挺好玩的</p>
+<p>文章很短，只是打个总结，记录一些有趣的发现</p>
+<!--more-->
+<h1>写在前面</h1>
+<p>之前在学习hook的时候，发现抄的一段代码只能在Debug模式下运行，调试后发现MSVC很有趣的一个点</p>
+<p>当我们使用Debug模式编译的时候，程序为了调试方便，会将所有函数加入这个表中</p>
+<p>比如</p>
+<pre><code class="language-cpp">
+void oldtest() {
+    MessageBoxA(NULL, &quot;not hook&quot;, &quot;test&quot;, NULL);
+}
+
+int main()
+{
+    oldtest();
+}
+</code></pre>
+<p>按照直觉<img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/45f2ae66613617bdfe44a54f286f7ab5.png" alt="image-20240315135117012" /></p>
+<p>这里的<code>call</code>应该会直接来到函数的位置，但是真实情况并非如此</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/f9b93b22f4d696e77ab104663a1504dd.png" alt="image-20240315135138849" /></p>
+<p>我们会发现一张跳表，根据距离这张表的地址差进行跳转，那段hook只是修改了这一段代码</p>
+<h1>x86 hook</h1>
+<p>首先是<code>x86</code>为啥叫32位架构，最突出的就是一个寄存器有32位(bit)大小，那么计算一下</p>
+<pre><code>(1&lt;&lt;32)/int(1024*1024*1024) = 4
+</code></pre>
+<p>没错，32位的寄存器最多只能存放4GB个数字（比如从<code>1</code>到<code>0x100000000</code>），
+由于要做加减发（有负数），所以能找到的地址位<code>±2GB</code>，
+那么8位为一个字节，那么一个寄存器只能由4个字节，
+<code>jmp</code>根据4字节这样对齐，所以32位下我们只需要<strong>覆盖5字节</strong>就能实现任意地址的跳转，
+再加上之前的debug模式，可以写出下列hook代码</p>
+<pre><code class="language-cpp">void Hooks::InlineHook_x32(FuncAddr HookFunction) {
+    //set read write
+    DWORD old;
+    DWORD size = 5;
+    FuncAddr offset = 0;
+
+    if (!VirtualProtect(LPVOID(this-&gt;FunctionAddr), size, PAGE_EXECUTE_READWRITE, &amp;old)) {
+        Error(&quot;Can't Set Memory read/write&quot;);
+        return;
+    }
+
+
+#ifdef _DEBUG
+    //hook with debug jmp table
+    offset = HookFunction - this-&gt;FunctionAddr - 5;
+    *(char*)this-&gt;FunctionAddr = '\xE9';
+    *(DWORD*)(this-&gt;FunctionAddr + 1) = offset;
+
+    //return to the origin
+    size = 5;
+    FuncAddr RealAddr = this-&gt;GetRealAddr((void *)HookFunction);
+    FuncAddr func_size = this-&gt;GetProcSize(RealAddr) - 1;
+    if (!VirtualProtect(LPVOID(RealAddr + func_size), size, PAGE_EXECUTE_READWRITE, &amp;old)) {
+        
+        Error(&quot;Can't Set Memory read/write&quot;);
+        return;
+    }
+    *(char*)(RealAddr + func_size + 0) = '\xE9';
+    offset = this-&gt;RealAddr - RealAddr;
+    *(DWORD*)(RealAddr + func_size + 1) = (offset - func_size - 5);
+    
+
+#else
+    //get first 5 bytes
+    char head[6] = { 0 };
+    memcpy(head, (void*)this-&gt;FunctionAddr, 5);
+
+
+    if (HookFunction &gt; this-&gt;FunctionAddr)
+        offset = (HookFunction - this-&gt;FunctionAddr - 5);
+    else
+        offset = ~(this-&gt;FunctionAddr - HookFunction - 5);
+
+    *(char*)(this-&gt;FunctionAddr + 0) = '\xE9';
+    *(DWORD*)(this-&gt;FunctionAddr + 1) = offset - 9; //API hook
+    //*(DWORD*)(this-&gt;FunctionAddr + 1) = offset;   //
+
+    //return to the origin
+    FuncAddr func_size = this-&gt;GetProcSize(HookFunction) - 1;
+    size = 10;
+    if (!VirtualProtect(LPVOID(HookFunction + func_size), size, PAGE_EXECUTE_READWRITE, &amp;old)) {
+        Error(&quot;Can't Set Memory read/write&quot;);
+        return;
+    }
+    //reset the top 5bytes in header
+    memcpy((void*)((FuncAddr)HookFunction + func_size), head, 5);
+    *(char*)(HookFunction + func_size + 5) = '\xE9';
+    //*(DWORD*)(HookFunction + func_size + 6) = ~(offset + func_size + 9);
+    *(DWORD*)(HookFunction + func_size + 6) = ~(offset + func_size);    //win api hook
+#endif
+}
+</code></pre>
+<h1>x64 hook</h1>
+<p>上面讲到了x86 hook只能2GB内内存寻址，到了x64寻址空间大大加大，单纯<code>jmp</code>和<code>call</code>已经无法跳转到地址，后来我看到一个很有意思的方法</p>
+<pre><code class="language-assembly">[Bits 64]
+
+_start:
+    push addr.low
+    mov dword [rsp+4], addr.high
+    ret
+</code></pre>
+<p>这个方法不会污染寄存器，也不会对栈造成影响，所以得到hook函数</p>
+<pre><code class="language-cpp">BOOL Hook::EnHook() {
+    if (this-&gt;OldFuncOpcode != NULL) {
+        std::cout &lt;&lt; &quot;[!]Already Hooked\n&quot;;
+        return FALSE;
+    }
+    DWORD old;
+    VirtualProtect((LPVOID)this-&gt;OldFunc, this-&gt;OpSzie, PAGE_EXECUTE_READWRITE, &amp;old);
+    this-&gt;OldFuncOpcode = (PBYTE)malloc(this-&gt;OpSzie + 1);
+    if (this-&gt;OldFuncOpcode == NULL) {
+        std::cout &lt;&lt; &quot;[!] Hook Function Malloc Failed\n&quot;;
+        return FALSE;
+    }
+
+    memcpy(this-&gt;OldFuncOpcode, (void*)this-&gt;OldFunc, this-&gt;OpSzie);
+    std::cout &lt;&lt; &quot;[*] Capture The First &quot; &lt;&lt; this-&gt;OpSzie &lt;&lt; &quot; Bytes: &quot;;
+    std::vector&lt;BYTE&gt; vec(this-&gt;OldFuncOpcode, this-&gt;OldFuncOpcode + this-&gt;OpSzie);
+    std::cout &lt;&lt; std::hex;
+    for (int num : vec)
+        std::cout &lt;&lt; &quot;0x&quot; &lt;&lt; num &lt;&lt; &quot; &quot;;
+    std::cout &lt;&lt; std::dec &lt;&lt; &quot;\n&quot;;
+    std::cout &lt;&lt; &quot;[*] Now Start Hook\n&quot;;
+
+    /*
+    *     push 0x10000
+    *     mov dword [rsp+4], 0x20000
+    *     ret
+    */
+    unsigned char jmpopcode[14] = {
+        0x68, 0x00, 0x00, 0x00, 0x00, 0xC7, 0x44, 0x24, 0x04, 0x00, 0x00, 0x00,0x00, 0xC3
+    };
+
+    //over write to jmp
+    FuncAddr gap = this-&gt;NewFunc;
+    *(DWORD32*)(jmpopcode + 1) = (DWORD32)gap;
+    *(DWORD32*)(jmpopcode + 9) = (DWORD32)(gap &gt;&gt; 32);
+    std::cout &lt;&lt; &quot;[*] Jmp Code Set\n&quot;;
+
+    VirtualProtect((LPVOID)this-&gt;OldFunc, this-&gt;OpSzie, PAGE_EXECUTE_READWRITE, &amp;old);
+    memcpy((PVOID)this-&gt;OldFunc, jmpopcode, this-&gt;OpSzie);
+    std::cout &lt;&lt; &quot;[*] Opcode Set\n&quot;;
+    return TRUE;
+}
+</code></pre>
+<p>保存好覆盖的字节，后续接触hook的时候再覆盖回来</p>
+
+</div>
+</div></body>

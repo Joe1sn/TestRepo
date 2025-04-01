@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<head>
+<meta charset="UTF-8" /><title>PureWeb Blog-【漏洞挖掘】win-afl使用指北-中级篇</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepogithub.css">
+<link rel="stylesheet" href="/TestRepospeciou.css"
+</head><body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo">Joe1sn's Cabin</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepoarchives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<div class="typora-export os-windows"><div id="write" class>
+<p><strong>2023-07-19 22:06:52</strong></p>
+<p>为什么不叫高级篇，因为高级的我也不会</p>
+<p>主要讲一下更贴近实际的用法吧</p>
+<p>!!!仅大标题1完成，全片未完待续!!!</p>
+<!--more-->
+<h1>对DLL进行Fuzz</h1>
+<h2>理论测试</h2>
+<p>代码还是上一篇提到的代码，依旧是32位，只不过溢出部分写在DLL里面</p>
+<p><code>dll.c</code></p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+
+__declspec(dllexport) void vuln(char *FileDir)
+{
+	char password[6] = &quot;ABCDE&quot;;
+	char str[6];
+	FILE *fp;
+	if(!(fp=fopen(FileDir,&quot;r&quot;))){
+		printf(&quot;Open Failed\n&quot;);
+		exit(0);
+	}
+	fgets(str, 0x1000, fp);
+
+	str[5]='\0';
+	if(strcmp(str,password)==0)
+		// fprintf(stderr,&quot;OK.\n&quot;);
+		printf(&quot;OK.\n&quot;);
+	else
+		// fprintf(stderr,&quot;NO.\n&quot;);
+		printf(&quot;NO.\n&quot;);
+}
+</code></pre>
+<p>编译</p>
+<pre><code>gcc -shared -o mydll.dll dll.c
+</code></pre>
+<p><code>main.c</code></p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+
+__declspec(dllimport) void vuln();
+
+int main(int argc, char *argv[])
+{
+	if (argc != 2){
+		printf(&quot;Usage: ./HelloWorld.exe FileName\n&quot;);
+		return 0;
+	}
+	vuln(argv[1]);
+	return 0;
+}
+</code></pre>
+<pre><code>gcc -o main main.c mydll.dll
+</code></pre>
+<p>不想联合编译的话也可以使用<code>GetProAddress</code>来编写如下harness</p>
+<pre><code class="language-c">#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+typedef DWORD(__cdecl *pvuln)(char* aFileName);
+pvuln vuln = NULL;
+
+extern &quot;C&quot; __declspec(dllexport) int main(int argc, char *argv[])
+{
+	char mydll_path[] = &quot;D:\\HackTools\\Fuzz\\WinAFLFuzz\\testcase\\dll\\mydll.dll&quot;;
+	if (argc != 2){
+		printf(&quot;Usage: ./HelloWorld.exe FileName\n&quot;);
+		return 0;
+	}
+
+	static HMODULE hMyDLL = NULL;
+	hMyDLL = LoadLibraryA(mydll_path);
+	if(hMyDLL == NULL){
+		printf(&quot;Load DLL Failed\n&quot;);
+		goto END;
+	}
+	vuln = (pvuln)GetProcAddress(hMyDLL,&quot;vuln&quot;);
+	if(vuln == NULL){
+		printf(&quot;Get Process Address Failed\n&quot;);
+		goto END;
+	}
+	vuln(argv[1]);
+
+END:
+	if(hMyDLL){
+		FreeLibrary(hMyDLL);
+	}
+	return 0;
+}
+</code></pre>
+<p>开始插桩看看</p>
+<pre><code>D:\HackTools\Fuzz\__FuzzWork\dynamorio\build_Win32\bin32\drrun.exe ^
+-c D:\HackTools\Fuzz\__FuzzWork\winafl\build_Win32\bin\Release\winafl.dll -debug ^
+-debug ^
+-coverage_module mydll.dll ^
+-target_module main.exe ^
+-target_offset 0x16B0 ^
+-fuzz_iterations 10 -nargs 2 -- ^
+main.exe .\in\password.txt
+</code></pre>
+<p>开始fuzz</p>
+<pre><code>afl-fuzz.exe ^
+-i .\in ^
+-o .\out ^
+-D &quot;D:\HackTools\Fuzz\__FuzzWork\dynamorio\build_Win32\bin32&quot; ^
+-I 100000+ -t 90000+ -- ^
+-coverage_module mydll.dll ^
+-target_module main.exe ^
+-target_offset 0x16B0 ^
+-fuzz_iterations 5000 -nargs 2 -- ^
+main.exe @@
+</code></pre>
+<p>瞬间找到crash</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/daaf8adb1d017be8d9a2cfe663b3e31e.png" alt="image-20230719223344759" /></p>
+<p>样本长这样</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/54e297bf0dc0db9abedc7f7a9dde0eb7.png" alt="image-20230719223644693" /></p>
+<p>这次尝试使用x32dbg分析</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/d7671aece307bb7bea07693d3ee10c34.png" alt="image-20230719223859881" /></p>
+<p>得到EXP</p>
+<pre><code class="language-python">payload = b&quot;&quot;
+shellcode = b&quot;&quot;
+
+offset = b&quot;A&quot;*(0x12c-len(shellcode)-32) #0x1c
+NSEH = b&quot;\xeb\x06\x90\x90&quot;      #asm(&quot;jmp 6;nop;nop&quot;)
+gadget = b&quot;\xEA\x23\x40\x00&quot;    #004023EA
+self_gadget = b&quot;\x89\xE0\x05\x24\x06\x00\x00\xFF\xE0&quot;	# mov eax, esp
+                                                        # sub eax, 0x608
+                                                        # jmp eax
+payload = b&quot;\xaa&quot;*32+shellcode+offset+NSEH+gadget+self_gadget
+
+with open(&quot;password.txt&quot;,&quot;wb&quot;) as f:
+    f.write(payload)
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/2b31205d967b4cbe010d72e2fa611249.png" alt="image-20230719224736838" /></p>
+<p>要点就是：<strong>Fuzz的时候和插桩的时候加上<code>-coverage_module &lt;你的dll&gt;</code></strong></p>
+<h2>实际测试</h2>
+<p>你已经学会了1+1=2，请证明费马大定理吧，为了统一和方便，这里也用看雪里面的一篇文章</p>
+<p><a href="https://bbs.kanxue.com/thread-265958.htm">使用winafl对迅雷的torrent解析逻辑进行fuzz </a></p>
+<p>首先是找到合适的软件，然后知道他那个功能是在那个dll中的，你可以使用<code>ProcessMonitor</code>查看（俗称<code>procmon</code>），截图没有，特征就是当你打开一个<code>.torrent</code>文件后，<code>thunder.exe</code>会马上加载<code>AssisstantTools.dll</code>。通过查看导出表可以找到一些可以测试的函数，这里我测试的是<code>XL_ParseTorrentFile</code></p>
+<img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/445b9aecbc3b84a5f61ac18ff7ca2b78.png" alt="image-20230721110915736" style="zoom:50%;" />
+<p>查看导入表可以看到依赖的<code>P2PBase.dll</code></p>
+<img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/ee4fca4ffb70d73f4b43d937125d366a.png" alt="image-20230721111002412" style="zoom:50%;" />
+<p>所以fuzz的时候也要加上，开始编写harness，你可以用那篇文章里面的，但是我这里就很慢，
+原文文章中的harness由于<code>using</code>附近的代码只在<code>c++11</code>中支持，所以使用gcc编译报错的可以尝试加上<code>-std=c++11</code>
+如果你使用的是下面我编写的harness，那么直接编译就可以了</p>
+<pre><code class="language-cpp">#include &lt;stdio.h&gt;
+#include &lt;windows.h&gt;
+
+typedef DWORD(__cdecl *pXL_ParseTorrentFile)(CHAR* aFileName, PVOID* a1);
+pXL_ParseTorrentFile XL_ParseTorrentFile = NULL;
+typedef DWORD(__cdecl *pXL_ReleaseTorrentFileInfo)(PVOID a1);
+pXL_ReleaseTorrentFileInfo XL_ReleaseTorrentFileInfo = NULL;
+
+extern &quot;C&quot; __declspec(dllexport) void fuzz_method(char *FilePath){
+    PVOID a1 = NULL;
+ 
+    XL_ParseTorrentFile(FilePath, &amp;a1);
+    if (a1)
+    {
+        XL_ReleaseTorrentFileInfo(a1);
+    }
+    return;
+}
+
+int main(int argc, char *argv[])
+{
+	//char AssisstantToolsPath[] = &quot;D:\\HackTools\\Fuzz\\WinAFLFuzz\\testcase\\thunder_fuzzer\\a.dll&quot;;
+	if (argc != 2){
+		printf(&quot;Usage: ./HelloWorld.exe FileName\n&quot;);
+		return 0;
+	}
+	static HMODULE hMyDLL = NULL;
+	hMyDLL = LoadLibraryA(&quot;AssistantTools.dll&quot;);
+	if(hMyDLL == NULL){
+		printf(&quot;Load DLL Failed\n&quot;);
+		goto END;
+	}
+	XL_ParseTorrentFile = (pXL_ParseTorrentFile)GetProcAddress(hMyDLL, &quot;XL_ParseTorrentFile&quot;);
+	if(XL_ParseTorrentFile == NULL){
+		printf(&quot;Get Process Address Failed\n&quot;);
+		goto END;
+	}
+	XL_ReleaseTorrentFileInfo = (pXL_ReleaseTorrentFileInfo)GetProcAddress(hMyDLL, &quot;XL_ReleaseTorrentFileInfo&quot;);
+	if(XL_ReleaseTorrentFileInfo == NULL){
+		printf(&quot;Get Process Address Failed\n&quot;);
+		goto END;
+	}
+
+    fuzz_method(argv[1]);
+
+END:
+	if(hMyDLL){
+		FreeLibrary(hMyDLL);
+	}
+    printf(&quot;Done\n&quot;);
+}
+</code></pre>
+<p>你可以用<code>drrun -t drcov --</code>来测试看是不是使用成功，之后使用<code>drrun</code>测试</p>
+<pre><code>&quot;D:\HackTools\Fuzz\__FuzzWork\dynamorio\build_Win32\bin32\drrun.exe&quot; ^
+-c winafl.dll -debug ^
+-coverage_module P2PBase.dll ^
+-coverage_module AssistantTools.dll ^
+-target_module fuzz_program.exe ^
+-target_offset 0x11ef ^
+-fuzz_iterations 10 -nargs 2 ^
+-- fuzz_program.exe &quot;D:\HackTools\Fuzz\WinAFLFuzz\testcase\thunder_fuzzer\testin\ubuntu-18.04.5-desktop-amd64.iso.torrent&quot;
+</code></pre>
+<ul>
+<li>
+<p><strong>问题1：</strong></p>
+<p>如果你使用的<code>Dynamorio</code>是大于 <strong>8.0.0-1</strong>版本的，很大概率会出现错误类似于下面</p>
+<img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/8be39e57103291b9933c16e1a6e5938e.png" alt="image-20230721111548243" style="zoom: 50%;" />
+<p>这种情况就是生成覆盖率文件是对的，但是测试的时候当程序进行IAT导入的时候，在<code>dynamorio</code>中的harness崩溃了，所以程序还没有进入<code>entry</code>入口点函数就直接寄了。这个错误很有意思，加载类似<code>ntdll.dll</code>或者自己在windows上写的DLL（哪怕无符号）都可以，当harness中的<code>LoadLibrary</code>载入其他DLL的时候（比如某个软件的<code>ffmpeg.dll</code>）也会报错。
+这个问题我解决了一天也没有解决，到是在看雪找了一个和我一样的帖子</p>
+<p>https://bbs.kanxue.com/thread-274169.htm</p>
+<p><strong>最后我的解决方法是更换到dynamorio 8.0.0-1版本过后重新编译就行了</strong></p>
+</li>
+<li>
+<p><strong>问题2：</strong></p>
+<p>当你使用<code>target_method</code>的时候，程序找不到该方法，这在你进行测试winafl案例的时候很常见，原因是该方法没有进行导出，在函数前面加上<code>extern &quot;C&quot; __declspec(dllexport)</code>就行了</p>
+<img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/9445f402596260b4ace1ac70c24f489b.png" alt="image-20230721112432715" style="zoom:50%;" />
+</li>
+</ul>
+<p>首先就是缩减testcase</p>
+<pre><code>python &quot;D:\HackTools\Fuzz\__FuzzWork\winafl\winafl-cmin.py&quot; --working-dir &quot;D:\HackTools\Fuzz\__FuzzWork\winafl\build_Win32\bin\Release&quot; -D &quot;D:\HackTools\Fuzz\__FuzzWork\dynamorio\build_Win32\bin32&quot; -t 9000 -i &quot;D:\HackTools\Fuzz\WinAFLFuzz\testcase\thunder_fuzzer\testin&quot; -o &quot;D:\HackTools\Fuzz\WinAFLFuzz\testcase\thunder_fuzzer\in&quot; -coverage_module AssistantTools.dll -coverage_module P2PBase.dll -target_module fuzz_program.exe -target_method fuzz_method -nargs 1 -- fuzz_program.exe @@ 
+</code></pre>
+<p>然后开始fuzz，开启一个Master吧</p>
+<pre><code>afl-fuzz.exe ^
+-M master ^
+-i &quot;D:\HackTools\Fuzz\WinAFLFuzz\testcase\thunder_fuzzer\in&quot; ^
+-o &quot;D:\HackTools\Fuzz\WinAFLFuzz\testcase\thunder_fuzzer\out&quot; ^
+-D &quot;D:\HackTools\Fuzz\__FuzzWork\dynamorio\build_Win32\bin32&quot; ^
+-I 100000+ -t 9000 -- ^
+-coverage_module AssistantTools.dll ^
+-coverage_module P2PBase.dll ^
+-target_module fuzz_program.exe ^
+-target_method fuzz_method ^
+-fuzz_iterations 5000 -nargs 1 -- ^
+fuzz_program.exe @@
+</code></pre>
+<ul>
+<li>
+<p><code>-M</code>: 指定这是一个Master进程</p>
+</li>
+<li>
+<p><code>-i -</code>：当fuzz暂停的时候恢复，在AFL上是<code>-in -</code>，具体用法</p>
+<pre><code>afl-fuzz.exe ^
+-M master ^
+-i -&quot;D:\HackTools\Fuzz\WinAFLFuzz\testcase\thunder_fuzzer\in&quot; ^
+-o &quot;D:\HackTools\Fuzz\WinAFLFuzz\testcase\thunder_fuzzer\out&quot; ^
+....
+</code></pre>
+</li>
+</ul>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/f8eda3779cf4f5a853f8a2e4370b3dfb.png" alt="img" /></p>
+<p>自己改写的harness确实快，但也不至于一下子就跑出来，这里我用旧版本的迅雷试了下</p>
+<img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/964c55b0c61c8d59db09b4b65d3deabb.png" alt="img" style="zoom:67%;" />
+<p>也就是一个被修复的÷0报错（EXCEPTION_INT_DIVIDE_BY_ZERO）</p>
+<p>昨天16h高强度修复问题1，暂时更新到这里</p>
+
+</div>
+</div></body>
