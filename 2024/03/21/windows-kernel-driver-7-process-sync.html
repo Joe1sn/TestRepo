@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" /><title>PureWeb Blog</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepo/github.css"><link rel="stylesheet" href="/TestRepo/speciou.css"></head>
+<body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo/">Joe1sn&apos;s Blog</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo/" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepo/archives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<p><strong>2024-03-21 10:00:52</strong></p>
+<p>日常复习操作系统</p>
+<!--more-->
+<h1>同步方式</h1>
+<ul>
+<li>自旋锁，之前讲过了</li>
+<li>信号量</li>
+<li>互斥体</li>
+<li><strong>事件同步</strong></li>
+</ul>
+<h1>事件同步</h1>
+<p>基于事件的同步，理解原理比写代码更重要</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/1ddff357201270d4320d39033ffede78.png" alt="image-20240321102341054" /></p>
+<p>感觉上和R3的使用差不多</p>
+<ul>
+<li>
+<p><code>KeInitializeEvent(&amp;kEvent, NotificationEvent, FALSE);</code></p>
+<p><code>NotificationEvent</code>：通知事件，手动处理，一般只用一次</p>
+<p><code>SynchronizationEvent</code>：同步事件，<code>KeWaitForSingleObject</code>等待通过，及不需要<code>KeResetEvent</code>，系统自动设置为未激发态</p>
+</li>
+<li>
+<p>如果在R3使用Event传递<code>Handle</code>到R0，由于HANDLE不是全局，所以得<code>ObReferenceObj</code></p>
+</li>
+</ul>
+<pre><code class="language-cpp">VOID KThreadB(PVOID context) {
+    LARGE_INTEGER sleeptime = { 0 };
+    PKEVENT pevent = (PKEVENT)context;
+    sleeptime.QuadPart = -100 * 10 * 1000 * 3;
+    while (1)
+    {
+        KeDelayExecutionThread(KernelMode, FALSE, &amp;sleeptime);
+        DbgPrint(&quot;Traggering envet\n&quot;);
+        KeSetEvent(pevent, IO_NO_INCREMENT, FALSE);
+    }
+    PsTerminateSystemThread(0);
+}
+
+VOID KThreadA(PVOID context) {
+    UNREFERENCED_PARAMETER(context);
+    KeInitializeEvent(&amp;kEvent, NotificationEvent, FALSE);
+    HANDLE hThread = NULL;
+    NTSTATUS status = PsCreateSystemThread(&amp;hThread, 0, NULL, NULL, NULL, KThreadB, (PVOID)&amp;kEvent);
+    if (!NT_SUCCESS(status)) {
+        DbgPrint(&quot;Create System Thread Failed\n&quot;);
+    }
+    ZwClose(hThread);
+    while (1)
+    {
+        KeWaitForSingleObject(&amp;kEvent, Executive, KernelMode, FALSE, NULL);
+        DbgPrint(&quot;Event Just Triggered\n&quot;);
+        KeResetEvent(&amp;kEvent);
+    }
+    PsTerminateSystemThread(0);
+}
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/e36b8ba3325a6f34837cb3d2e7b5647a.png" alt="image-20240321104634499" /></p>
+
+</div>
+</div></body></html>

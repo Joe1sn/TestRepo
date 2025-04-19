@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" /><title>PureWeb Blog</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepo/github.css"><link rel="stylesheet" href="/TestRepo/speciou.css"></head>
+<body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo/">Joe1sn&apos;s Blog</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo/" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepo/archives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<p><strong>2022-07-30 11:41:11</strong></p>
+<h1>基于安全容器的拟态防御构想</h1>
+<p><strong>摘要</strong>：近年来，在各种网络入侵事件下，网络空间安全得到越来越重视。为了改变传统的网络安全防御静态和被动的特点，研究人员形成了利用动态冗余原理的拟态防御理论，但同时拟态防御需要耗费一定的设备资源来达到所预设的安全条件。为此，我想出了一种基于Docker的安全容器的拟态防御构想，来平衡安全性和经济性的情况下，来使得拟态防御更大规模的应用，让网络空间更加安全。</p>
+<p><strong>关键词</strong>：网络安全 拟态防御 安全容器 Docker</p>
+<!-- more -->
+<h2>一、前言</h2>
+<p>近年来，世界各国高度重视网络空间安全这一领域，为了应对网络安全威胁所造成的安全问题和网络空间发展权、主导权、控制权各国间展开了激烈的角逐。网络空间安全技术已经成为了关系国家利益和安全的核心技术[1]，</p>
+<p>为了改变传统网络安全防御技术的静态和被动式的特点，研究人员形成了拟态防御的新型基础理论[2]。在此理论中，我们利用异构冗余原理对拟态变换进行设计，同时利用马尔可夫博弈模型创建拟态防御策略[3]，将漏洞和后门的不确定性转变为概率可控的可靠事件，进而大大增加系统的安全性。同时Intel SGX[4]技术的出现，以硬件安全为强制性保障，实现敏感数据程序与普通程序的隔离，提供可信执行环境，大大减小了攻击面，并且Arnautov 等[5]基于Intel SGX设计了SCONE的Docker安全环境等都为拟态防御的实例化提供了相应的技术，简化了实现拟态防御预期安全度的设备资源。</p>
+<p>在拟态防御中我们一般将拟态变换的主要分层为[2]：网络层、平台、运行环境、软件层和数据，并针对这些层次利用异构冗余、单线联系、分片化和碎片化，输入输出代理和随机动态化的安全机制对上述层次进行拟态变化，但是实际中的机器性能、网络环境的差异和庞大的资源开销等因素使得我们通常不能再每一个层次上进行拟态变化，所以我们可以通过Intel SGX技术将攻击面减小到只针对CPU的硬件级别，利用SCONE[5]实现安全容器的隔离。SCONE依托Docker的轻量化的特点[7]，使用随机参数和动态选择算法创建Docker集群，在不同层面上做出拟态仿真，将该集群变为动态异构冗余构造[6]中的执行体集的具体实现，实现Linux平台上的有效的拟态安全防御策略的落地实现。</p>
+<h2>二、执行体集构造理论</h2>
+<h3>2.1 威胁建模</h3>
+<p>在这里我们假设攻击者能够发现所部署项目的任何相关的漏洞，设为一个漏洞合集 $V$ 。那么攻击者就能从和集中选出一组或多组攻击向量集 $v \subseteq V$ 来进行攻击。同时假设漏洞合集中有的能进行越权攻击，将导致操作系统不可信，从而影响拟态防御中数据的机密性、一致性和可用性。这里我们不针对拒绝服务攻击，或利用时序和页面错误的侧信道攻击这些很难被利用的攻击[8]。</p>
+<h3>2.2 SCONE概述</h3>
+<p>SCONE(Secure CONtainer Environment) [5]是Arnautov 等将Intel SGX作为可信计算基（TCB）搭建的保护Linux容器中应用数据的机密性与完整性的一种安全保护机制。SCONE中的威胁建模考虑到了攻击者拥有超级用户访问权限系统，还可以访问物理硬件的攻击方式，利用Intel SGX的隔离性来实现受保护代码与计算机系统的隔离，让攻击面缩小到只针对CPU的硬件级别。同时权衡了性能与安全，使得在保证安全的前提下不过多的损失性能。</p>
+<h3>2.3 异构执行体集构造</h3>
+<p>我们是利用SCONE来构造一个单独的执行体，由[5]中所示的SCONE构架图，那么组成该执行体的可变要素可表示数学集合</p>
+<p>$p=o,n,f,t,cl,c,m,d$</p>
+<p>$p=o,n,f,t,cl,c,m,d$</p>
+<p>其中，$o$ 表示宿主机的操作系统；$n$ 表示网络层的防护；$f$ 表示文件系统保护层；$t$ 表示enclaves线程映射到系统线程的映射机制；$cl$ 表示SGX所选定的C的库文件；$c$ 表示异步系统调用的接口；$m$ 表示SCONE的内核模组；$d$ 表示该SCONE依托的SGX的驱动。</p>
+<p>其中 $n,f,t,cl,c$ 是处于可行边界中的，标记为可信区。则 $o,m,d$ 为可信区之外的要素，标记为不可信区，可以作为执行体的输入之一。由实际中的硬件和软件资源，通过对这些要素进行排列组合可以得到异构执行体集。</p>
+<p><img src="https://img.joe1sn.top/uploads/medium/d8187a06d94c1dd3b5dfafa27e9fc87a.png" alt="Figure 1异构输入体集与输入代理" /></p>
+<blockquote>
+<p>Figure 2拟态安全容器防御系统中SCONE的应用</p>
+</blockquote>
+<p>这里就将执行体设置为安全容器，使得其中部分执行体遭受漏洞攻击时，利用SGX的隔离性保护其他正常执行体免受这些执行体的干扰。表决器从可信区域内获得执行完成的信息并对其进行了表决，这样使得表决器的表决依据更加的安全可信。</p>
+<h2>三、拟态安全容器防御系统(Mimic Secure Container Defense System)</h2>
+<p>在拟态防御体系中，我们从输入到输出有：输入、输入代理、功能等价冗余执行体、表决模块、输出组成[6]。我们可以构造不同的容器来对：输入代理、功能等价冗余执行体、多模表决模块这三个部分进行隔离，使得出现的安全问题互不影响。同时为了实现动态选择算法RS的随机参数有效，我们需要将异构执行体的生成放在一个可信计算基中来避免随机参数是伪随机数导致异构失效的情况。SCONE在系统中的应用位置如下图表2所示。</p>
+<p><img src="https://img.joe1sn.top/uploads/medium/f9c90b4e2511dc603b201ff2ed574595.png" alt="Figure 2拟态安全容器防御系统中SCONE的应用" /></p>
+<blockquote>
+<p>Figure 2拟态安全容器防御系统中SCONE的应用</p>
+</blockquote>
+<h3>3.1输入代理</h3>
+<p>对于网络攻击而言，填入会触发漏洞的数据最终的目的是为了改变程序的正常执行代码，所以我们不将输入的数据看作向量，而是将输入的数据转为异构执行代码通过输入代理分配到每一个异构执行体中。</p>
+<p>在我们构建的威胁模型中，攻击者可能控制到输入代理功能模块，导致攻击者可以对任意异构执行体进行选择，然而系统的安全性是依托于异构执行体的 $I$ 阶输出一致率，异构执行体又是通过SCONE机制保护起来的，所以我们并不需要对输入代理进行过多的保护。</p>
+<h3>3.2异构执行体生成器</h3>
+<p>为了保证异构执行体集的异构性，就必须保证动态选择算法中随机参数的安全性。所以我们应该将动态选择算法使用SGX与其他部分隔离开来，并且实现随机执行体可变因素的安全传递来防止对手对异构性的破坏</p>
+<h3>3.3异构执行体集</h3>
+<p>在一个可变周期内，异构执行体集的添加由异构执行体生成器生成的执行体返回到异构执行体集中，其中利用SGX或者TPM的加密操作[9]来对返回的执行体和生成它的异构执行体生成器可变因素 $p$ 的完整性、机密性的验证。</p>
+<p>为了尽可能让每个执行体的执行结果互不干扰，使用SCONE机制让他们相互隔离。这样也是的每个异构执行体的运行结果能更安全的传递到表决模块中。</p>
+<h3>3.4表决模块</h3>
+<p>表决模块负责对异构执行体集的执行结果进行评判，因此要确保运行结果的安全传递并且不能被外部影响。综上，应当使用SCONE来加固表决模块的安全性，并通过密码学机制实现运行结果的安全传输。</p>
+<h2>四、可行性分析与评估</h2>
+<h3>4.1性能分析</h3>
+<p>首先，我们的系统大量的使用了SCONE机制作为技术依托，虽然SCONE对于基本的SGX技术做出了改进，同时SCONE机制又是基于Intel SGX技术[5]，其中SGX技术的enclave页的缺页替换、复杂的系统调用都无可避免的增大了系统开销。</p>
+<p>系统中同样使用了大量SGX的加密解密技术，同样SGX每访问一次enclave都会进行一次加密解密，这些为了安全性的密码学机制也增大了系统开销。</p>
+<p>异构执行体是由异构执行体生成器生成，程序再经过异构程序执行体集执行后再交给表决器表决，相较于无保护的系统肯定会降低运行效率。同时异构执行体们的执行是并发进行的，这就要就我们的设计要有良好的并发性和安全性，一方面是增大系统运行事件，一方面破坏了内生安全性。</p>
+<h3>4.2系统缺陷</h3>
+<p>我们为了降低攻击面，使用Intel SGX作为可信计算基。但是该项技术为Intel创造[4]，仅有Intel旗下的CPU拥有该项技术，这使得系统的异构性大打折扣。同时SGX作为TCB其内生安全的抗侧信道和内存攻击仍然存在问题（虽然在我们威胁建模之外）。由4.1可以看出，该系统虽然依托传统固件的拟态防御体系，增加了对硬件设备的利用率，让异构执行体实现了安全隔离，但是系统开销过大，难以维持较好的同步性，面对大量数据情况下，异构执行体可能会在同一变换周期使用两次，降低安全性。</p>
+<h3>4.3下一步研究方向</h3>
+<p>解决该系统性能开销庞大的问题，规范和设计参数在安全容器中的传递机制。设计测试代码来验证系统的机密性、一致性和可用性。并尝试构造分布式异构执行体集，输入代理中使用神经网络自动调节所选择的异构执行体集，实现数据处理的负载均衡的同时增强异构性。</p>
+<h2>五、总结</h2>
+<p>在网络安全与国家安全高度结合的今天，面对传统安全静态、被动式，拟态防御硬件依托效率低的特点，使用安全容器技术构造可信执行环境来增强拟态防御系统中的隔离性和安全性，将安全防御变为主动的、廉价的，最终提升国家网络安全水平。而目前该系统所带来的不足，如高系统开销、异构性不足等问题是急需解决的，尝试使用神经网络来达到数据处理的负载均衡也是未来的研究方向之一。</p>
+<h2>参考文献</h2>
+<p>[1] 张焕国, 韩文报, 来学嘉, 等. 网络空间安全综述[J]. 信息安全, 2016, 1: 4.</p>
+<p>[2] 斯雪明, 王伟, 曾俊杰, 等. 拟态防御基础理论研究综述[J]. 中国工程科学, 2016, 18(6): 62-68.</p>
+<p>[3] 张兴明, 顾泽宇, 魏帅, 等. 拟态防御马尔可夫博弈模型及防御策略选择[J]. 通信学报, 2018, 39(10): 143-154.</p>
+<p>[4] INTEL CORPORATION. INTEL SOFTWARE GUARD EXTENSIONS (INTEL SGX). INTEL LABS[EB]</p>
+<p>[5] ARNAUTOV S, TRACH B, GREGOR F, ET AL. {SCONE}: SECURE LINUX CONTAINERS WITH INTEL-{SGX}[C]//12TH {USENIX} SYMPOSIUM ON OPERATING SYSTEMS DESIGN AND IMPLEMENTATION-({OSDI} 16). 2016: 689-703.</p>
+<p>[6] 邬江兴. 网络空间拟态防御研究[J]. 信息安全学报, 2016 (4): 1-10.</p>
+<p>[7] MERKEL D. DOCKER: LIGHTWEIGHT LINUX CONTAINERS FOR CONSISTENT DEVELOPMENT AND DEPLOYMENT[J]. LINUX JOURNAL, 2014, 2014(239): 2.</p>
+<p>[8] Xu Y, Cui W, Peinado M. Controlled-channel attacks: Deterministic side channels for untrusted operating systems[C]//2015 IEEE Symposium on Security and Privacy. IEEE, 2015: 640-656.</p>
+<p>[9] Chakraborty D, Bugiel S, Jha A A. Poster: TGX: Secure SGX enclave management using TPM[J]. 2019.</p>
+
+</div>
+</div></body></html>

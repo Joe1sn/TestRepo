@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" /><title>PureWeb Blog</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepo/github.css"><link rel="stylesheet" href="/TestRepo/speciou.css"></head>
+<body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo/">Joe1sn&apos;s Blog</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo/" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepo/archives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<p><strong>2023-07-22 08:41:03</strong></p>
+<p>其实还是挺简单的</p>
+<!--more-->
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/2ce8fd381c9b8cd5f9ebfc1e137790c7.png" alt="image-20230722090502823" /></p>
+<p>在一次期末报告里面做了这个报告</p>
+<p><strong>关于AFL的基本步骤</strong></p>
+<p>工作流程基本上可以用 5 个步骤来描述：预处理、输入构建、输入选择、评估、后模糊测试。 真正的内核处理是步骤 2 到 4</p>
+<ul>
+<li>
+<p>预处理</p>
+<p>分析和获取有用信息，使用PIN，符号执行，污点检查</p>
+<p>黑盒白盒</p>
+</li>
+<li>
+<p>输入构建</p>
+<p>从数据 S（种子）产生大量变异数据 I。</p>
+</li>
+<li>
+<p>输入选择</p>
+<p>过滤无效数据，优化模糊测试</p>
+</li>
+<li>
+<p>评估</p>
+<p>大多数关于模糊的研究集中在两个指标上：覆盖率和利用漏洞的平均时间</p>
+</li>
+</ul>
+<h1>源码分析</h1>
+<h2>编译插桩</h2>
+<h3>afl-gcc</h3>
+<p>根据使用方法，首先是使用<code>afl-gcc</code>进行编译，在编译时就完成插桩</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/97bdf6ef6f906c0fe4f25c248f13ece7.png" alt="image-20230722090843228" /></p>
+<p>本就是是包裹的GCC盒CLANG</p>
+<pre><code class="language-c">int main(int argc, char** argv) {
+
+  if (isatty(2) &amp;&amp; !getenv(&quot;AFL_QUIET&quot;)) {
+
+    SAYF(cCYA &quot;afl-cc &quot; cBRI VERSION cRST &quot; by &lt;lcamtuf@google.com&gt;\n&quot;);
+
+  } else be_quiet = 1;
+
+  if (argc &lt; 2) {
+
+    SAYF(&quot;\n&quot;
+         &quot;This is a helper application for afl-fuzz. It serves as a drop-in replacement\n&quot;
+         &quot;for gcc or clang, letting you recompile third-party code with the required\n&quot;
+         &quot;runtime instrumentation. A common use pattern would be one of the following:\n\n&quot;
+
+         &quot;  CC=%s/afl-gcc ./configure\n&quot;
+         &quot;  CXX=%s/afl-g++ ./configure\n\n&quot;
+
+         &quot;You can specify custom next-stage toolchain via AFL_CC, AFL_CXX, and AFL_AS.\n&quot;
+         &quot;Setting AFL_HARDEN enables hardening optimizations in the compiled code.\n\n&quot;,
+         BIN_PATH, BIN_PATH);
+
+    exit(1);
+
+  }
+
+  find_as(argv[0]);
+
+  edit_params(argc, argv);
+
+  execvp(cc_params[0], (char**)cc_params);
+
+  FATAL(&quot;Oops, failed to execute '%s' - check your PATH&quot;, cc_params[0]);
+
+  return 0;
+
+}
+</code></pre>
+<p><code>SAYF</code>就是<code>fprintf</code>函数，检测到参数小于2的时候报错并退出</p>
+<ul>
+<li>使用<code>find_as</code>进行参数的解析到自身程序路径，找到<code>afl-as</code>的afl汇编器</li>
+<li><code>edit_params</code>中，解析参数，设置自生对应的编译器，获得和设置一系列环境变量，最后得到的<code>cc_params</code>就是编译参数</li>
+<li><code> execvp(cc_params[0], (char**)cc_params);</code>，通过前面找到的汇编器<code>as_path</code>和参数创建进程进行插桩编译。（具体就是替换了程序名称之类的，源码很简单）</li>
+</ul>
+<h3>afl-as</h3>
+<p><strong>main</strong></p>
+<p>进入main创建了一些列变量然后就是在<code>a</code> 中将 <code>cc_params</code> 转为<code>as_params</code></p>
+<p><strong>add_instrumentation</strong></p>
+<p>重头函数</p>
+<pre><code class="language-c">while (fgets(line, MAX_LINE, inf)) {
+
+    /* In some cases, we want to defer writing the instrumentation trampoline
+       until after all the labels, macros, comments, etc. If we're in this
+       mode, and if the line starts with a tab followed by a character, dump
+       the trampoline now. */
+
+    if (!pass_thru &amp;&amp; !skip_intel &amp;&amp; !skip_app &amp;&amp; !skip_csect &amp;&amp; instr_ok &amp;&amp;
+        instrument_next &amp;&amp; line[0] == '\t' &amp;&amp; isalpha(line[1])) {
+
+      fprintf(outf, use_64bit ? trampoline_fmt_64 : trampoline_fmt_32,
+              R(MAP_SIZE));
+
+      instrument_next = 0;
+      ins_lines++;
+
+    }
+    ....
+    ....
+}
+</code></pre>
+<p>所以，AFL的代码插桩，就是在将源文件编译为汇编代码后，通过<code>afl-as</code>完成。开始重写汇编指令，准备在分支处插入代码</p>
+<p>先看看32位，64位和这个也差不多</p>
+<p><code>trampoline_fmt_32</code></p>
+<pre><code>static const u8* trampoline_fmt_32 =
+
+  &quot;\n&quot;
+  &quot;/* --- AFL TRAMPOLINE (32-BIT) --- */\n&quot;
+  &quot;\n&quot;
+  &quot;.align 4\n&quot;
+  &quot;\n&quot;
+  &quot;leal -16(%%esp), %%esp\n&quot;
+  &quot;movl %%edi,  0(%%esp)\n&quot;
+  &quot;movl %%edx,  4(%%esp)\n&quot;
+  &quot;movl %%ecx,  8(%%esp)\n&quot;
+  &quot;movl %%eax, 12(%%esp)\n&quot;
+  &quot;movl $0x%08x, %%ecx\n&quot;
+  &quot;call __afl_maybe_log\n&quot;
+  &quot;movl 12(%%esp), %%eax\n&quot;
+  &quot;movl  8(%%esp), %%ecx\n&quot;
+  &quot;movl  4(%%esp), %%edx\n&quot;
+  &quot;movl  0(%%esp), %%edi\n&quot;
+  &quot;leal 16(%%esp), %%esp\n&quot;
+  &quot;\n&quot;
+  &quot;/* --- END --- */\n&quot;
+  &quot;\n&quot;;
+</code></pre>
+<p>这就是汇编，听chatGPT说</p>
+<pre><code class="language-asm">section .text
+global _start
+
+_start:
+    lea esp, [esp-16]      ; leal -16(%esp), %esp
+    mov [esp], edi         ; movl %edi, 0(%esp)
+    mov [esp+4], edx       ; movl %edx, 4(%esp)
+    mov [esp+8], ecx       ; movl %ecx, 8(%esp)
+    mov [esp+12], eax      ; movl %eax, 12(%esp)
+    mov ecx, 0x08000000    ; movl $0x%08x, %ecx
+    call __afl_maybe_log   ; call __afl_maybe_log
+    mov eax, [esp+12]      ; movl 12(%esp), %eax
+    mov ecx, [esp+8]       ; movl 8(%esp), %ecx
+    mov edx, [esp+4]       ; movl 4(%esp), %edx
+    mov edi, [esp]         ; movl 0(%esp), %edi
+    lea esp, [esp+16]      ; leal 16(%esp), %esp
+</code></pre>
+<p>32位是经典的栈传参，这里使用对esp的移动实现了从<code>edi</code> <code>edx</code> <code>ecx</code> <code>eax</code>的保存，然后又将<code>ecx</code>设置为了0x08000000，这个是chatGPT翻译错了，正确的理解是&quot;%08x&quot; 是格式说明符，用于将一个整数格式化为一个带有前导零的 8 位十六进制数。例如，&quot;%08x&quot; 将把数字 10 格式化为 &quot;0000000A&quot;。这段汇编仍然是属于C语言的范畴。</p>
+<p>似乎我们下一步要看的是<code>__afl_maybe_log</code>，**但是你就没想过R(MAP_SIZE)**有什么用吗？<code>R(x)</code>的定义是<code>(random() % (x))</code>，所以<code>R(MAP_SIZE)</code>即为0到MAP_SIZE之间的一个随机数。</p>
+<p>因此，在处理到某个分支，需要插入桩代码时，<code>afl-as</code>会生成一个随机数，作为运行时保存在<code>ecx</code>中的值。而这个随机数，便是用于标识这个代码块的key。</p>
+<p>接下来来到<code>__afl_maybe_log</code></p>
+<h2>运行</h2>
+<p>开始fuzz，那么afl如何启动这个程序，可以看看<code>afl-fuzz.c</code>，不过最开始后世设置参数，这里将重要点的部分。</p>
+<p>调用的链条有点复杂首先在L8044</p>
+<pre><code class="language-c">skipped_fuzz = fuzz_one(use_argv);
+</code></pre>
+<p>然后的<code>fuzz_one</code>中，使用队列<code>queue_cur</code>来管理</p>
+<pre><code class="language-c">res = calibrate_case(argv, queue_cur, in_buf, queue_cycle - 1, 0);
+</code></pre>
+<p>在<code>calibrate_case</code></p>
+<pre><code class="language-c">  if (dumb_mode != 1 &amp;&amp; !no_forkserver &amp;&amp; !forksrv_pid)
+    init_forkserver(argv);
+</code></pre>
+<p>总算是找到了</p>
+<blockquote>
+<p>为了更高效地进行上述过程，AFL实现了一套fork server机制。其基本思路是：启动target进程后，target会运行一个fork server；fuzzer并不负责fork子进程，而是与这个fork server通信，并由fork server来完成fork及继续执行目标的操作。这样设计的最大好处，就是不需要调用<code>execve()</code>，从而节省了载入目标文件和库、解析符号地址等重复性工作</p>
+</blockquote>
+<p>L1987</p>
+<pre><code class="language-c">int st_pipe[2], ctl_pipe[2];
+....
+forksrv_pid = fork();
+</code></pre>
+<p>使用pipe和forkserver进行通讯</p>
+<p>L2088的位置开始执行<code>execv(target_path, argv);</code>。其实看到这里我也很疑惑上面的解释</p>
+<p>在L2103中测试和forkserver的通讯</p>
+<pre><code class="language-c">    fsrv_ctl_fd = ctl_pipe[1];
+    fsrv_st_fd  = st_pipe[0];
+    rlen = read(fsrv_st_fd, &amp;status, 4);
+...
+  /* If we have a four-byte &quot;hello&quot; message from the server, we're all set.
+     Otherwise, try to figure out what went wrong. */
+
+  if (rlen == 4) {
+    OKF(&quot;All right - fork server is up.&quot;);
+    return;
+  }    
+</code></pre>
+<p>接下来的fork server是如何与fuzzer通信是面试考点（/doge）</p>
+<h3>forkserver</h3>
+<p>知道创宇不知道是讲的太碎了还是我理解有问题，在这里我就不怎么追的了代码了，不过想起开始说过的：<strong>fuzzer并不负责fork子进程，而是与这个fork server通信，并由fork server来完成fork及继续执行目标的操作</strong>，那么很有可能和插进去的<code>__afl_maybe_log</code>一样是插入入进去了一个<code>forkserver</code>在代码当中，那么回到<code>afl-as</code>，L446</p>
+<pre><code class="language-c">  if (ins_lines)
+    fputs(use_64bit ? main_payload_64 : main_payload_32, outf);
+</code></pre>
+<p>依然以32位举例子<code>main_payload_32</code></p>
+<pre><code class="language-c">&quot;__afl_forkserver:\n&quot;
+  &quot;\n&quot;
+  &quot;  /* Enter the fork server mode to avoid the overhead of execve() calls. */\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl %eax\n&quot;
+  &quot;  pushl %ecx\n&quot;
+  &quot;  pushl %edx\n&quot;
+  &quot;\n&quot;
+  &quot;  /* Phone home and tell the parent that we're OK. (Note that signals with\n&quot;
+  &quot;     no SA_RESTART will mess it up). If this fails, assume that the fd is\n&quot;
+  &quot;     closed because we were execve()d from an instrumented binary, or because\n&quot; 
+  &quot;     the parent doesn't want to use the fork server. */\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $4          /* length    */\n&quot;
+  &quot;  pushl $__afl_temp /* data      */\n&quot;
+  &quot;  pushl $&quot; STRINGIFY((FORKSRV_FD + 1)) &quot;  /* file desc */\n&quot;
+  &quot;  call  write\n&quot;
+  &quot;  addl  $12, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  cmpl  $4, %eax\n&quot;
+  &quot;  jne   __afl_fork_resume\n&quot;
+</code></pre>
+<p>看注释也看的明白了，给fuzzer说已经准备完毕，其中<code>$__afl_temp</code>就是四字节长度的验证信息，然后开始等待循环，读取命令管道，直到fuzzer通知其开始</p>
+<pre><code class="language-c">  &quot;__afl_fork_wait_loop:\n&quot;
+  &quot;\n&quot;
+  &quot;  /* Wait for parent by reading from the pipe. Abort if read fails. */\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $4          /* length    */\n&quot;
+  &quot;  pushl $__afl_temp /* data      */\n&quot;
+  &quot;  pushl $&quot; STRINGIFY(FORKSRV_FD) &quot;        /* file desc */\n&quot;
+  &quot;  call  read\n&quot;
+  &quot;  addl  $12, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  cmpl  $4, %eax\n&quot;
+  &quot;  jne   __afl_die\n&quot;      
+</code></pre>
+<p>有错误就寄<code>__afl_die</code>，那么成功的话</p>
+<pre><code class="language-c">  &quot;  /* Once woken up, create a clone of our process. This is an excellent use\n&quot;
+  &quot;     case for syscall(__NR_clone, 0, CLONE_PARENT), but glibc boneheadedly\n&quot;
+  &quot;     caches getpid() results and offers no way to update the value, breaking\n&quot;
+  &quot;     abort(), raise(), and a bunch of other things :-( */\n&quot;
+  &quot;\n&quot;
+  &quot;  call fork\n&quot;
+  &quot;\n&quot;
+  &quot;  cmpl $0, %eax\n&quot;
+  &quot;  jl   __afl_die\n&quot;
+  &quot;  je   __afl_fork_resume\n&quot;        
+</code></pre>
+<p>得到父子进程的ID，对待子进程走到<code>__afl_fork_resume</code></p>
+<pre><code class="language-c">&quot;__afl_fork_resume:\n&quot;
+  &quot;\n&quot;
+  &quot;  /* In child process: close fds, resume execution. */\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $&quot; STRINGIFY(FORKSRV_FD) &quot;\n&quot;
+  &quot;  call  close\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $&quot; STRINGIFY((FORKSRV_FD + 1)) &quot;\n&quot;
+  &quot;  call  close\n&quot;
+  &quot;\n&quot;
+  &quot;  addl  $8, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  popl %edx\n&quot;
+  &quot;  popl %ecx\n&quot;
+  &quot;  popl %eax\n&quot;
+  &quot;  jmp  __afl_store\n&quot;
+</code></pre>
+<p>对于大于0的返回值（即父进程）他继续运行</p>
+<pre><code class="language-c">&quot;  /* In parent process: write PID to pipe, then wait for child. */\n&quot;
+  &quot;\n&quot;
+  &quot;  movl  %eax, __afl_fork_pid\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $4              /* length    */\n&quot;
+  &quot;  pushl $__afl_fork_pid /* data      */\n&quot;
+  &quot;  pushl $&quot; STRINGIFY((FORKSRV_FD + 1)) &quot;      /* file desc */\n&quot;
+  &quot;  call  write\n&quot;
+  &quot;  addl  $12, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $0             /* no flags  */\n&quot;
+  &quot;  pushl $__afl_temp    /* status    */\n&quot;
+  &quot;  pushl __afl_fork_pid /* PID       */\n&quot;
+  &quot;  call  waitpid\n&quot;
+  &quot;  addl  $12, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  cmpl  $0, %eax\n&quot;
+  &quot;  jle   __afl_die\n&quot;
+  &quot;\n&quot;
+  &quot;  /* Relay wait status to pipe, then loop back. */\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $4          /* length    */\n&quot;
+  &quot;  pushl $__afl_temp /* data      */\n&quot;
+  &quot;  pushl $&quot; STRINGIFY((FORKSRV_FD + 1)) &quot;  /* file desc */\n&quot;
+  &quot;  call  write\n&quot;
+  &quot;  addl  $12, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  jmp __afl_fork_wait_loop\n&quot;    
+</code></pre>
+<p>继续进行forkserver的管道通讯，然后<code>__afl_fork_wait_loop</code>，</p>
+<h3>fuzzer</h3>
+<p>回顾一下目前“栈”的情况：<code>main</code> -&gt; <code>calibrate_case</code> -&gt; <code>init_forkserver</code></p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/0d62f5f1741495588a352bb92afabe74.png" alt="image-20230722112212761" /></p>
+<p>​	回退到<code>calibrate_case</code>继续执行，<code>write_to_testcase</code>就是设置测试样例，重点在于<code>run_target</code>。AFL的文件编译策略不是胡乱变换的，主要是<code>dumb_mode</code>有没有被开启，一般都是不会开启的，那么就来到了L2362</p>
+<pre><code class="language-c">    s32 res;
+
+    /* In non-dumb mode, we have the fork server up and running, so simply
+       tell it to have at it, and then read back PID. */
+
+    if ((res = write(fsrv_ctl_fd, &amp;prev_timed_out, 4)) != 4) {
+
+      if (stop_soon) return 0;
+      RPFATAL(res, &quot;Unable to request new process from fork server (OOM?)&quot;);
+
+    }
+
+    if ((res = read(fsrv_st_fd, &amp;child_pid, 4)) != 4) {
+
+      if (stop_soon) return 0;
+      RPFATAL(res, &quot;Unable to request new process from fork server (OOM?)&quot;);
+
+    }
+
+    if (child_pid &lt;= 0) FATAL(&quot;Fork server is misbehaving (OOM?)&quot;);
+
+  }
+</code></pre>
+<p>看注释和代码，知道通过管道向forkserver通知准备完毕，并得到返回的PID，然后就是L2438</p>
+<pre><code class="language-c">  if (WIFSIGNALED(status) &amp;&amp; !stop_soon) {
+
+    kill_signal = WTERMSIG(status);
+
+    if (child_timed_out &amp;&amp; kill_signal == SIGKILL) return FAULT_TMOUT;
+
+    return FAULT_CRASH;
+
+  }
+</code></pre>
+<p>fuzzer再次读取状态管道，获取子进程退出状态，并由此来判断子进程结束的原因，例如正常退出、超时、崩溃等，并进行相应的记录</p>
+<h3>共享内存机制</h3>
+<p>解决程序插桩和启动运行后，就来到了对示例的fuzz阶段。在程序待测试部分，程序先是初始化变异方式。AFL通过共享内存机制来方便高并发的样例读取，减小IO的损耗。
+代码不长这里贴一下</p>
+<pre><code class="language-c">EXP_ST void setup_shm(void) {
+
+  u8* shm_str;
+
+  if (!in_bitmap) memset(virgin_bits, 255, MAP_SIZE);
+
+  memset(virgin_tmout, 255, MAP_SIZE);
+  memset(virgin_crash, 255, MAP_SIZE);
+
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
+
+  if (shm_id &lt; 0) PFATAL(&quot;shmget() failed&quot;);
+
+  atexit(remove_shm);
+
+  shm_str = alloc_printf(&quot;%d&quot;, shm_id);
+
+  /* If somebody is asking us to fuzz instrumented binaries in dumb mode,
+     we don't want them to detect instrumentation, since we won't be sending
+     fork server commands. This should be replaced with better auto-detection
+     later on, perhaps? */
+
+  if (!dumb_mode) setenv(SHM_ENV_VAR, shm_str, 1);
+
+  ck_free(shm_str);
+
+  trace_bits = shmat(shm_id, NULL, 0);
+  
+  if (!trace_bits) PFATAL(&quot;shmat() failed&quot;);
+
+}
+</code></pre>
+<p>在<code>afl-fuzz</code>的L7955来到<code>setup_shm</code>，这里设置共享内存，然后从<code>shemget()</code>（这是一个LinuxC的函数）获得一块内存。</p>
+<blockquote>
+<p>shmget()  returns  the identifier of the System V shared memory segment associated with the value of the argu‐
+ment key.  A new shared memory segment, with size equal to the value of size  rounded  up  to  a  multiple  of
+PAGE_SIZE, is created if key has the value IPC_PRIVATE or key isn't IPC_PRIVATE, no shared memory segment cor‐
+responding to key exists, and IPC_CREAT is specified in shmflg.</p>
+</blockquote>
+<p>子进程通过环境变量<code>SHM_ENV_VAR</code>得到内存，对于fuzzer本身则会回到<code>trace_bits</code>保存内存地址</p>
+<blockquote>
+<p>shmat()  attaches  the  System V shared memory segment identified by shmid to the address space of the calling
+process.</p>
+</blockquote>
+<p>我们在且回到被测试的target中，看下他被插桩的代码（早于之前的forkserver）</p>
+<pre><code class="language-c"> &quot;  /* Check if SHM region is already mapped. */\n&quot;
+  &quot;\n&quot;
+  &quot;  movl  __afl_area_ptr, %edx\n&quot;
+  &quot;  testl %edx, %edx\n&quot;
+  &quot;  je    __afl_setup\n&quot;
+  &quot;\n&quot;
+</code></pre>
+<ul>
+<li>
+<p><code>__afl_area_ptr</code>：共享内存映射到target的内存空间中的地址</p>
+</li>
+<li>
+<p><code>__afl_setup</code>：获取环境变量<code>AFL_SHM_ENV</code>的内容并将其转为整型，最后，通过调用<code>shmat()</code>，target将这块共享内存也映射到了自己的内存空间中，并将其地址保存在<code>__afl_area_ptr</code>及<code>edx</code>中</p>
+<pre><code class="language-c">&quot;\n&quot;
+  &quot;__afl_setup:\n&quot;
+  &quot;\n&quot;
+  &quot;  /* Do not retry setup if we had previous failures. */\n&quot;
+  &quot;\n&quot;
+  &quot;  cmpb $0, __afl_setup_failure\n&quot;
+  &quot;  jne  __afl_return\n&quot;
+  &quot;\n&quot;
+  &quot;  /* Map SHM, jumping to __afl_setup_abort if something goes wrong.\n&quot;
+  &quot;     We do not save FPU/MMX/SSE registers here, but hopefully, nobody\n&quot;
+  &quot;     will notice this early in the game. */\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl %eax\n&quot;
+  &quot;  pushl %ecx\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $.AFL_SHM_ENV\n&quot;
+  &quot;  call  getenv\n&quot;
+  &quot;  addl  $4, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  testl %eax, %eax\n&quot;
+  &quot;  je    __afl_setup_abort\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl %eax\n&quot;
+  &quot;  call  atoi\n&quot;
+  &quot;  addl  $4, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  pushl $0          /* shmat flags    */\n&quot;
+  &quot;  pushl $0          /* requested addr */\n&quot;
+  &quot;  pushl %eax        /* SHM ID         */\n&quot;
+  &quot;  call  shmat\n&quot;
+  &quot;  addl  $12, %esp\n&quot;
+  &quot;\n&quot;
+  &quot;  cmpl $-1, %eax\n&quot;
+  &quot;  je   __afl_setup_abort\n&quot;
+</code></pre>
+</li>
+</ul>
+<h3>分支信息的记录</h3>
+<p>来到文章开始抛出的疑问<code>__afl_maybe_log</code>干了什么</p>
+<pre><code class="language-c">  &quot;__afl_maybe_log:\n&quot;
+  &quot;\n&quot;
+  &quot;  lahf\n&quot;
+  &quot;  seto %al\n&quot;
+  &quot;\n&quot;
+  &quot;  /* Check if SHM region is already mapped. */\n&quot;
+  &quot;\n&quot;
+  &quot;  movl  __afl_area_ptr, %edx\n&quot;
+  &quot;  testl %edx, %edx\n&quot;
+  &quot;  je    __afl_setup\n&quot;
+  &quot;\n&quot;
+  &quot;__afl_store:\n&quot;
+</code></pre>
+<p>读代码就知道了：</p>
+<ul>
+<li>
+<p>检查共享内存的映射，有错进入到<code>__afl_setup</code></p>
+</li>
+<li>
+<p>开始<code>__afl_store</code>：</p>
+<pre><code class="language-c">  &quot;__afl_store:\n&quot;
+  &quot;\n&quot;
+  &quot;  /* Calculate and store hit for the code location specified in ecx. There\n&quot;
+  &quot;     is a double-XOR way of doing this without tainting another register,\n&quot;
+  &quot;     and we use it on 64-bit systems; but it's slower for 32-bit ones. */\n&quot;
+  &quot;\n&quot;
+#ifndef COVERAGE_ONLY
+  &quot;  movl __afl_prev_loc, %edi\n&quot;
+  &quot;  xorl %ecx, %edi\n&quot;
+  &quot;  shrl $1, %ecx\n&quot;
+  &quot;  movl %ecx, __afl_prev_loc\n&quot;
+#else
+  &quot;  movl %ecx, %edi\n&quot;
+#endif /* ^!COVERAGE_ONLY */
+  &quot;\n&quot;
+#ifdef SKIP_COUNTS
+  &quot;  orb  $1, (%edx, %edi, 1)\n&quot;
+#else
+  &quot;  incb (%edx, %edi, 1)\n&quot;
+#endif /* ^SKIP_COUNTS */
+  &quot;\n&quot;
+</code></pre>
+<ul>
+<li><code>__afl_prev_loc</code>：前一次跳转的”位置”</li>
+<li><code>ecx</code>：最开始插桩的随机数位置，即代码块的标号</li>
+</ul>
+<blockquote>
+<p>因此，AFL为每个代码块生成一个随机数，作为其“位置”的记录；随后，对分支处的”源位置“和”目标位置“进行异或，并将异或的结果作为该分支的key，保存每个分支的执行次数。用于保存执行次数的实际上是一个哈希表，大小为<code>MAP_SIZE=64K</code>，当然会存在碰撞的问题；但根据AFL文档中的介绍，对于不是很复杂的目标，碰撞概率还是可以接受的：</p>
+</blockquote>
+<p>在最后<code>map density</code>就是指的哈希表的密度，越小发生碰撞的概率越小</p>
+</li>
+</ul>
+<h3>分支信息的分析</h3>
+<p>前文提到了</p>
+<ul>
+<li><code>trace_bits</code>保存了共享内存</li>
+<li>共享内存保存了分析记录</li>
+</ul>
+<p>那么，对于AFL从这块共享内存中获得信息就显得很合理了</p>
+<p>在预处理共享内存时</p>
+<pre><code class="language-c">static inline void classify_counts(u32* mem) {
+
+  u32 i = MAP_SIZE &gt;&gt; 2;
+
+  while (i--) {
+
+    /* Optimize for sparse bitmaps. */
+
+    if (unlikely(*mem)) {
+
+      u16* mem16 = (u16*)mem;
+
+      mem16[0] = count_class_lookup16[mem16[0]];
+      mem16[1] = count_class_lookup16[mem16[1]];
+
+    }
+    mem++;
+  }
+
+}
+</code></pre>
+<pre><code class="language-c">/* Destructively classify execution counts in a trace. This is used as a
+   preprocessing step for any newly acquired traces. Called on every exec,
+   must be fast. */
+static const u8 count_class_lookup8[256] = {
+
+  [0]           = 0,
+  [1]           = 1,
+  [2]           = 2,
+  [3]           = 4,
+  [4 ... 7]     = 8,
+  [8 ... 15]    = 16,
+  [16 ... 31]   = 32,
+  [32 ... 127]  = 64,
+  [128 ... 255] = 128
+
+};
+</code></pre>
+<p>最重要的是<code>count_class_lookup8</code>，target是将每个分支的执行次数用1个byte来储存，而fuzzer则进一步把这个执行次数归入buckets中，比如执行1次，<code>mem16 = count_class_lookup8[1]; == 1</code></p>
+<p>执行3次<code>mem16 = count_class_lookup8[3]; == 4</code>。执行4次<code>mem16 = count_class_lookup8[4]; == 8</code></p>
+<p>好处就在于分支A执行了32次；对另外一个测试用例，分支A执行了33次，那么AFL就会认为这两次的代码覆盖是相同的。这样通过代码块的执行次数就可以统计相关路径，AFL根据相关路径的HASH判断路径是否发生改变。</p>
+<h1>文件变异规则</h1>
+<p>看到好多研究生论文都是从这里下手的。。。</p>
+<ul>
+<li>
+<p>bitflip，按位翻转，1变为0，0变为1</p>
+<p>在对每个byte进行翻转时，如果其造成执行路径与原始路径不一致，就将该byte在effector map中标记为1，即“有效”的，否则标记为0，即“无效”的</p>
+</li>
+<li>
+<p>arithmetic，整数加/减算术运算</p>
+<p>对目标整数会进行+1, +2, ..., +35, -1, -2, ..., -35的变异。特别地，由于整数存在大端序和小端序两种表示方式，AFL会贴心地对这两种整数表示方式都进行变异。</p>
+</li>
+<li>
+<p>interest，把一些特殊内容替换到原文件中</p>
+<p>用于替换的&quot;interesting values&quot;，是AFL预设的一些比较特殊的数。</p>
+<p><code>config.h</code></p>
+<pre><code class="language-c">#define INTERESTING_8 \
+  -128,          /* Overflow signed 8-bit when decremented  */ \
+  -1,            /*                                         */ \
+   0,            /*                                         */ \
+   1,            /*                                         */ \
+   16,           /* One-off with common buffer size         */ \
+   32,           /* One-off with common buffer size         */ \
+   64,           /* One-off with common buffer size         */ \
+   100,          /* One-off with common buffer size         */ \
+   127           /* Overflow signed 8-bit when incremented  */
+
+#define INTERESTING_16 \
+  -32768,        /* Overflow signed 16-bit when decremented */ \
+  -129,          /* Overflow signed 8-bit                   */ \
+   128,          /* Overflow signed 8-bit                   */ \
+   255,          /* Overflow unsig 8-bit when incremented   */ \
+   256,          /* Overflow unsig 8-bit                    */ \
+   512,          /* One-off with common buffer size         */ \
+   1000,         /* One-off with common buffer size         */ \
+   1024,         /* One-off with common buffer size         */ \
+   4096,         /* One-off with common buffer size         */ \
+   32767         /* Overflow signed 16-bit when incremented */
+
+#define INTERESTING_32 \
+  -2147483648LL, /* Overflow signed 32-bit when decremented */ \
+  -100663046,    /* Large negative number (endian-agnostic) */ \
+  -32769,        /* Overflow signed 16-bit                  */ \
+   32768,        /* Overflow signed 16-bit                  */ \
+   65535,        /* Overflow unsig 16-bit when incremented  */ \
+   65536,        /* Overflow unsig 16 bit                   */ \
+   100663045,    /* Large positive number (endian-agnostic) */ \
+   2147483647    /* Overflow signed 32-bit when incremented */
+</code></pre>
+</li>
+<li>
+<p>dictionary，把自动生成或用户提供的token替换/插入到原文件中（从头开始）</p>
+<p><code>-x</code>选项设置的token</p>
+</li>
+<li>
+<p>havoc，中文意思是“大破坏”，此阶段会对原文件进行大量变异，具体见下文</p>
+<p>开始智力下降，我在fuzz中看到的大多数都是这个阶段（阿巴阿巴）</p>
+<ul>
+<li>随机选取某个bit进行翻转</li>
+<li>随机选取某个byte，将其设置为随机的interesting value</li>
+<li>随机选取某个word，并随机选取大、小端序，将其设置为随机的interesting value</li>
+<li>随机选取某个dword，并随机选取大、小端序，将其设置为随机的interesting value</li>
+<li>随机选取某个byte，对其减去一个随机数</li>
+<li>随机选取某个byte，对其加上一个随机数</li>
+<li>随机选取某个word，并随机选取大、小端序，对其减去一个随机数</li>
+<li>随机选取某个word，并随机选取大、小端序，对其加上一个随机数</li>
+<li>随机选取某个dword，并随机选取大、小端序，对其减去一个随机数</li>
+<li>随机选取某个dword，并随机选取大、小端序，对其加上一个随机数</li>
+<li>随机选取某个byte，将其设置为随机数</li>
+<li>随机删除一段bytes</li>
+<li>随机选取一个位置，插入一段随机长度的内容，其中75%的概率是插入原文中随机位置的内容，25%的概率是插入一段随机选取的数</li>
+<li>随机选取一个位置，替换为一段随机长度的内容，其中75%的概率是替换成原文中随机位置的内容，25%的概率是替换成一段随机选取的数</li>
+<li>随机选取一个位置，用随机选取的token（用户提供的或自动生成的）替换</li>
+<li>随机选取一个位置，用随机选取的token（用户提供的或自动生成的）插入</li>
+</ul>
+</li>
+<li>
+<p>splice，中文意思是“绞接”，此阶段会将两个文件拼接起来得到一个新的文件</p>
+<p>splice是将两个seed文件拼接得到新的文件，并对这个新文件继续执行havoc变异</p>
+</li>
+<li>
+<p>cycle：对队列所有文件全部按照上面的步骤来一遍就算完成了一个cycle，整个队列又会从第一个文件开始，再次进行变异，不过与第一次变异不同的是，这一次就不需要再进行deterministic fuzzing了。</p>
+</li>
+</ul>
+<h1>参考</h1>
+<p>https://paper.seebug.org/496/</p>
+<p>https://github.com/google/AFL</p>
+
+</div>
+</div></body></html>

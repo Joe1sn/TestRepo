@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8" /><title>PureWeb Blog</title><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/default.min.css" /><script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>  <script>    document.querySelectorAll('code').forEach((code) => {      if (!code.classList.length) {        code.classList.add('language-bash');      }    });  </script>	<script>		document.addEventListener('DOMContentLoaded', (event) => {			hljs.highlightAll();		});	</script><link rel="stylesheet" href="/TestRepo/github.css"><link rel="stylesheet" href="/TestRepo/speciou.css"></head>
+<body><div class="container"><header class="main-header"><h1 class="main-header__title uplize"><a class="main-header__title__link" href="/TestRepo/">Joe1sn&apos;s Blog</a></h1><nav class="main-header__nav"><ul class="main-nav"><li class="main-nav__list"><a class="main-nav__list__link active" href="/TestRepo/" target="_self">HOME</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="/TestRepo/archives/"target="_self">ARCHIVE</a></li><li class="main-nav__list"><a class="main-nav__list__link" href="https://github.com/Joe1sn"target="_blank">GITHUB</a></li></ul></nav></header></div><div id="write" class>
+<div id="write" class>
+<p><strong>2024-10-11 14:12:09</strong></p>
+<p>学习是对技术的祛魅</p>
+<p>公众号：</p>
+<!--more-->
+<p>或许我们的公众号会有更多你感兴趣的内容</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/a0d42261f5e0b243c214f5af9049fc29.jpg" alt="img" /></p>
+<h1>Direct3D11 注入</h1>
+<p>在此之前，公众号已经简述了<code>MinHook</code>的原理，那么利用这种原理我们就可以通过hook在d3d编写的游戏中实现窗口</p>
+<p>相关代码：https://github.com/Joe1sn/dx11-hook-example</p>
+<h2>Direct3D简述</h2>
+<p>这里使用<code>ImGui</code>的默认dx11版本示例来讲解，首先d3d的绘制依靠的是windows的窗口(window)，接着是D3D设备、上下文和交换链以及各种绘制方法的d3dAPI传入操作系统和GPU，最后传输到显示器显示，大致如下</p>
+<img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/6ad88f19b612a87f0fb01fa263ec643b.png" alt="d3d" style="zoom:33%;" />
+<p>那么对于d3d API来说是这样的：</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/95bce98f171ccebac244f038b7c2fdad.png" alt="d3d2" /></p>
+<h2>如何显示</h2>
+<p>那么最后如何得到渲染好的最终帧呢？答案是交换链的 <code>IDXGISwapChain::Present</code> 方法用于呈现最终渲染的帧</p>
+<p>https://learn.microsoft.com/zh-cn/windows/win32/api/dxgi/nn-dxgi-idxgiswapchain</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/4824f10eb0ef21a90370e4945328cdfe.png" alt="image-20240917122252505" /></p>
+<p>具体参数</p>
+<p>https://learn.microsoft.com/zh-cn/windows/win32/api/dxgi/nf-dxgi-idxgiswapchain-present</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/2f28850b01647a34c57d9de400ec9880.png" alt="image-20240917122310168" /></p>
+<p>那么我们可以hook这个函数，然后提交我们要现实的内容，最后再一同显示出来</p>
+<h2>编写DLL</h2>
+<p>这里我就是用visual studio 2022 默认的DLL项目</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/5ee8bb5398a29ab79eed633f6e706a8d.png" alt="image-20240917122615650" /></p>
+<p>导入imgui和minhook</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/dd7ca61bd48246964b9157a0cf175503.png" alt="image-20240917122813488" /></p>
+<p>本篇文章将处理的是dx11版本的d3d，那么如何判断游戏是否使用了该dll呢？一般来说是凭借经验，不过也可以使用CE遍历一下DLL即可</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/49035b1e59e676e047d645fdfe4bd7c2.png" alt="image-20240917123134652" /></p>
+<p>如果发现调用了多种图形API，例如OpenGL，Vulkan等，可查看使用调用对应的呈现最终帧的渲染函数，也可以参考kiero的一些做法，链接：https://github.com/Rebzzel/kiero</p>
+<p>那么如何找到该函数呢？别忘了最后的dll是注入到程序中的，那么我们的dll也可以使用<code>d3d11.dll</code>，而且前文提到过<code>IDXGISwapChain::Present</code>是<code>IDXGISwapChain</code>下的方法，那么我们如果也要使用该方法，也是会跳转到同一个位置（因为注入后就是同一个程序了，那么对应的dll的内存也是同一块）</p>
+<p>而且<code>Present</code>是虚函数，位置在<code>vtable[8]</code>，</p>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/599e0ba67c882ef76728154004315291.png" alt="image-20240917131813505" /></p>
+<p>那么可以得到定位函数，这里抄了下imgui例子</p>
+<pre><code class="language-cpp">// 定义函数参数
+typedef long(__stdcall* DIGX_Present)(IDXGISwapChain*, UINT, UINT);
+DIGX_Present originPresent;
+DIGX_Present old_present;
+
+bool getPresentPtr()
+{
+    // Setup swap chain
+    DXGI_SWAP_CHAIN_DESC sd;
+    ZeroMemory(&amp;sd, sizeof(sd));
+    sd.BufferCount = 2;
+    sd.BufferDesc.Width = 0;
+    sd.BufferDesc.Height = 0;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    //sd.BufferDesc.RefreshRate.Numerator = 60;         跟随游戏的fps
+    //sd.BufferDesc.RefreshRate.Denominator = 1;        跟随游戏
+    sd.OutputWindow = GetForegroundWindow();        //  跟随游戏窗口
+    sd.SampleDesc.Count = 1;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+    UINT createDeviceFlags = 0;
+    IDXGISwapChain* swap_chain;
+    ID3D11Device* device;
+
+    D3D_FEATURE_LEVEL featureLevel;
+    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
+    if (D3D11CreateDeviceAndSwapChain(
+        nullptr, 
+        D3D_DRIVER_TYPE_HARDWARE, 
+        nullptr, 
+        createDeviceFlags, 
+        featureLevelArray, 
+        2, 
+        D3D11_SDK_VERSION, 
+        &amp;sd, 
+        &amp;swap_chain,
+        &amp;device,
+        &amp;featureLevel, 
+        nullptr) == S_OK) {
+        void** p_vtable = *reinterpret_cast&lt;void***&gt;(swap_chain);   //得到虚函数表
+        swap_chain-&gt;Release();      //释放
+        device-&gt;Release();          //释放
+        old_present = (DIGX_Present)p_vtable[8];    //从虚函数表得到present函数
+        return true;
+    }
+    return false;
+}
+</code></pre>
+<p>确定下主线程的主要结构</p>
+<pre><code class="language-cpp">//&quot;main&quot; loop
+int WINAPI main(HMODULE hModule) {
+
+    // 1.获得函数
+    if (!getPresentPtr())
+        return 1;
+
+    // 2.开始hook
+    //  2.1 hook初始化
+    if (MH_Initialize() != MH_OK)
+        return 1;
+    //  2.2 创建hook
+    if (MH_CreateHook(reinterpret_cast&lt;void**&gt;(old_present), &amp;myPresent, reinterpret_cast&lt;void**&gt;(&amp;originPresent)) != MH_OK)
+        return 1;
+    //  2.3 启用hook
+    if (MH_EnableHook(old_present) != MH_OK)
+        return 1;
+    // 3.等待 F1 退出
+    while (true) {
+        Sleep(50);
+
+        if (GetAsyncKeyState(VK_F1)) {
+            break;
+        }
+    }
+    // 4.退出hook，清理
+        //Cleanup
+    if (MH_DisableHook(MH_ALL_HOOKS) != MH_OK)
+        return 1;
+    if (MH_Uninitialize() != MH_OK)
+        return 1;
+    FreeLibraryAndExitThread(hModule, 0);
+    return 0;
+}
+
+BOOL APIENTRY DllMain( HMODULE hModule,
+                       DWORD  ul_reason_for_call,
+                       LPVOID lpReserved
+                     )
+{
+    switch (ul_reason_for_call)
+    {
+    case DLL_PROCESS_ATTACH: {
+        CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)main, hModule, 0, NULL);
+    }
+    case DLL_THREAD_ATTACH:
+    case DLL_THREAD_DETACH:
+    case DLL_PROCESS_DETACH:
+        break;
+    }
+    return TRUE;
+}
+
+
+</code></pre>
+<p>完成<code>myPresent</code>来替换旧的<code>Present</code>，这里依旧是抄了写imgui的示例代码，主要还是参考示例代码中的初始化和绘制的步骤</p>
+<pre><code class="language-cpp">WNDPROC oWndProc;
+// Forward declare message handler from imgui_impl_win32.cpp
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+// Win32 message handler
+// You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
+// - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
+// - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
+// Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
+LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+        return true;
+
+    return ::DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+bool init = false;
+HWND window = NULL;
+static ID3D11Device* g_pd3dDevice = nullptr;
+static ID3D11DeviceContext* g_pd3dDeviceContext = nullptr;
+static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
+static long __stdcall myPresent(IDXGISwapChain* p_swap_chain, UINT sync_interval, UINT flags) {
+    if (!init) {
+        //从swap chain获得device
+        if (SUCCEEDED(p_swap_chain-&gt;GetDevice(__uuidof(ID3D11Device), (void**)&amp;g_pd3dDevice)))
+        {
+            //获得上下文
+            g_pd3dDevice-&gt;GetImmediateContext(&amp;g_pd3dDeviceContext);
+            
+            //
+            DXGI_SWAP_CHAIN_DESC sd;
+            p_swap_chain-&gt;GetDesc(&amp;sd);
+            window = sd.OutputWindow;
+            ID3D11Texture2D* pBackBuffer;
+            p_swap_chain-&gt;GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&amp;pBackBuffer);
+            g_pd3dDevice-&gt;CreateRenderTargetView(pBackBuffer, NULL, &amp;g_mainRenderTargetView);
+            pBackBuffer-&gt;Release();
+
+            oWndProc = (WNDPROC)SetWindowLongPtr(window, GWLP_WNDPROC, (LONG_PTR)WndProc);
+
+            //创建imgui上下文
+            ImGui::CreateContext();
+            ImGuiIO&amp; io = ImGui::GetIO(); (void)io;
+            io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+            io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+            ImGui::StyleColorsDark();
+
+            ImGuiStyle&amp; style = ImGui::GetStyle();
+            if (io.ConfigFlags)
+            {
+                style.WindowRounding = 0.0f;
+                style.Colors[ImGuiCol_WindowBg].w = 1.0f;
+            }
+
+            ImGui_ImplWin32_Init(window);
+            ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
+            init = true;
+        }
+        else
+            return originPresent(p_swap_chain, sync_interval, flags);
+    }
+    ImGui_ImplDX11_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+
+    ImGui::NewFrame();
+
+    ImGui::ShowDemoWindow();
+
+    ImGui::EndFrame();
+    ImGui::Render();
+    g_pd3dDeviceContext-&gt;OMSetRenderTargets(1, &amp;g_mainRenderTargetView, nullptr);
+    ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+    // Update and Render additional Platform Windows
+    //if (io.ConfigFlags &amp; ImGuiConfigFlags_ViewportsEnable)
+    //{
+    //    ImGui::UpdatePlatformWindows();
+    //    ImGui::RenderPlatformWindowsDefault();
+    //}
+
+    //// Present
+    //HRESULT hr = g_pSwapChain-&gt;Present(1, 0);   // Present with vsync
+    ////HRESULT hr = g_pSwapChain-&gt;Present(0, 0); // Present without vsync
+    //g_SwapChainOccluded = (hr == DXGI_STATUS_OCCLUDED);
+
+    return originPresent(p_swap_chain, sync_interval, flags);
+}
+</code></pre>
+<p><img src="https://img-1300594400.cos.ap-shanghai.myqcloud.com/uploads/big/f950e1c8830aacf20c596032f21d2345.png" alt="image-20240917134455215" /></p>
+
+</div>
+</div></body></html>
